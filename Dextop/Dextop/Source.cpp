@@ -64,26 +64,46 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Draw smaller red close button at absolute top right with curved corners and centered X
+        // Get main viewport once for this frame
         ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImVec2 button_size = ImVec2(24, 24);
-        ImVec2 button_pos = ImVec2(viewport->Pos.x + viewport->Size.x - button_size.x - 4, viewport->Pos.y + 4);
-        ImGui::SetNextWindowPos(button_pos);
-        ImGui::SetNextWindowSize(button_size);
-        ImGui::SetNextWindowBgAlpha(0.0f); // Transparent background
-        ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_AlwaysAutoResize;
-        ImGui::Begin("##closebtn", nullptr, flags);
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(200, 30, 30, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(255, 60, 60, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(180, 0, 0, 255));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 9.0f); // Curved corners
-        ImGui::SetCursorPos(ImVec2(0, 0)); // Top-left of the window
-        if (ImGui::Button("X", button_size))
-        {
-            show_window = false;
+
+        // Draw fixed menu bar at the top
+        ImVec2 menubar_pos = ImVec2(viewport->Pos.x, viewport->Pos.y);
+        ImVec2 menubar_size = ImVec2(viewport->Size.x, 28.0f); // 28px height for menu bar
+        ImGui::SetNextWindowPos(menubar_pos);
+        ImGui::SetNextWindowSize(menubar_size);
+        ImGui::SetNextWindowBgAlpha(1.0f);
+        ImGuiWindowFlags menubar_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoTitleBar;
+        ImGui::Begin("##fixedmenubar", nullptr, menubar_flags);
+        if (ImGui::BeginMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("New")) { /* handle New */ }
+                if (ImGui::MenuItem("Open")) { /* handle Open */ }
+                if (ImGui::BeginMenu("Recent")) {
+                    if (ImGui::MenuItem("File1.txt")) { /* handle File1 */ }
+                    if (ImGui::MenuItem("File2.txt")) { /* handle File2 */ }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo")) { /* handle Undo */ }
+                if (ImGui::MenuItem("Redo")) { /* handle Redo */ }
+                ImGui::EndMenu();
+            }
+            // Add Exit button to the extreme right with custom colors
+            float button_width = 60.0f;
+            float margin = 8.0f;
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - button_width - margin);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));         // light red
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));  // red
+            if (ImGui::Button("Exit", ImVec2(button_width, 0))) {
+                show_window = false;
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::EndMenuBar();
         }
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(3);
         ImGui::End();
 
         ImGui::Begin("Hello, world!");
