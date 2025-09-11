@@ -20,7 +20,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     // glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // Uncomment to prevent resizing
 
     // Create window with OpenGL context
-    GLFWwindow* window = glfwCreateWindow(800, 600, "ImGui Black Window", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "Dextop", nullptr, nullptr);
     if (!window)
     {
         glfwTerminate();
@@ -92,6 +92,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 if (ImGui::MenuItem("Redo")) { /* handle Redo */ }
                 ImGui::EndMenu();
             }
+            // Add Settings menu
+            if (ImGui::BeginMenu("Settings")) {
+                if (ImGui::MenuItem("Preferences")) { /* handle Preferences */ }
+                if (ImGui::MenuItem("Themes")) { /* handle Themes */ }
+                ImGui::EndMenu();
+            }
             // Add Exit button to the extreme right with custom colors
             float button_width = 60.0f;
             float margin = 8.0f;
@@ -108,6 +114,31 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
         ImGui::Begin("Hello, world!");
         ImGui::Text("This is a black window using ImGui via vcpkg.");
+        ImGui::End();
+
+        // Draw fixed status bar at the bottom
+        ImVec2 statusbar_size = ImVec2(viewport->Size.x, 24.0f); // 24px height for status bar
+        ImVec2 statusbar_pos = ImVec2(viewport->Pos.x, viewport->Pos.y + viewport->Size.y - statusbar_size.y);
+        ImGui::SetNextWindowPos(statusbar_pos);
+        ImGui::SetNextWindowSize(statusbar_size);
+        ImGui::SetNextWindowBgAlpha(1.0f);
+        ImGuiWindowFlags statusbar_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+        ImGui::Begin("##statusbar", nullptr, statusbar_flags);
+        ImGui::TextUnformatted("Status: Ready");
+        ImGui::End();
+
+        // Draw fixed Directory Tree window on the left
+        float sidebar_width = 240.0f;
+        float sidebar_top = menubar_pos.y + menubar_size.y;
+        float sidebar_height = viewport->Size.y - menubar_size.y - 24.0f; // 24px for status bar
+        ImVec2 sidebar_pos = ImVec2(viewport->Pos.x, sidebar_top);
+        ImVec2 sidebar_size = ImVec2(sidebar_width, sidebar_height);
+        ImGui::SetNextWindowPos(sidebar_pos);
+        ImGui::SetNextWindowSize(sidebar_size);
+        ImGuiWindowFlags sidebar_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+        ImGui::Begin("Directory Tree", nullptr, sidebar_flags);
+        ImGui::Text("Directory Tree Content");
         ImGui::End();
 
         // Render ImGui
