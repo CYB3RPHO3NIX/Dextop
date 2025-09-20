@@ -13,6 +13,10 @@
 #include <mutex>
 #include <map>
 #include "json_utils.hpp"
+#include <commdlg.h>
+#include <shlobj.h>
+#include <shobjidl.h>
+#include <objbase.h>
 
 // Helper struct for folder stats
 struct FolderStats {
@@ -273,8 +277,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     static bool pref_show_item_checkboxes = false;
     static bool pref_show_side_panel = true;
     static std::vector<std::string> checked_items; // store full paths
-    // Persisted selected section for preferences (moved out so we can load/save it)
-    static int selected_section = 0;
+    // Buffers and state for New->File/Folder/Shortcut dialogs
+    static char new_file_name[260] = "";
+    static char new_folder_name[260] = "";
+    static char new_shortcut_name[260] = "";
+    static char new_shortcut_target[MAX_PATH] = "";
+    static bool open_new_file_popup = false;
+    static bool open_new_folder_popup = false;
+    static bool open_new_shortcut_popup = false;
+    // Custom selector state for choosing target path (replaces Windows dialogs)
+    static bool open_select_target_popup = false;
+    static bool select_target_mode_file = true; // true==file, false==folder
+    static std::string select_target_current = ""; // current folder shown in selector
+    static std::string select_target_selected = ""; // selected item (file or folder)
+    static char select_preview[MAX_PATH] = "";
+     // Persisted selected section for preferences (moved out so we can load/save it)
+     static int selected_section = 0;
 
     // Load preferences from config.json if available
     {
@@ -378,8 +396,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("Undo")) { /* handle Undo */ }
-                if (ImGui::MenuItem("Redo")) { /* handle Redo */ }
+                if (ImGui::BeginMenu("New")) {
+                    if (ImGui::MenuItem("File")) { open_new_file_popup = true; }
+                    if (ImGui::MenuItem("Folder")) { open_new_folder_popup = true; }
+                    if (ImGui::MenuItem("Shortcut")) { open_new_shortcut_popup = true; }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::MenuItem("Cut")) { /* handle Cut */ }
+                if (ImGui::MenuItem("Copy")) { /* handle Copy */ }
+                if (ImGui::MenuItem("Delete")) { /* handle Delete */ }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Rename")) { /* handle Rename */ }
+                if (ImGui::MenuItem("Share")) { /* handle Share */ }
                 ImGui::EndMenu();
             }
             // Add Settings menu
@@ -871,6 +899,224 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 // --- END BUTTONS ---
             }
             ImGui::End();
+        }
+
+        // Ensure popups are opened when requested
+        if (open_new_file_popup) { ImGui::OpenPopup("New File"); open_new_file_popup = false; }
+        if (open_new_folder_popup) { ImGui::OpenPopup("New Folder"); open_new_folder_popup = false; }
+        if (open_new_shortcut_popup) { ImGui::OpenPopup("New Shortcut"); open_new_shortcut_popup = false; }
+
+        // New File modal
+        if (ImGui::BeginPopupModal("New File", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("File name (with extension)", new_file_name, sizeof(new_file_name));
+            ImGui::Separator();
+            if (ImGui::Button("OK", ImVec2(120,0))) {
+                // Determine target directory
+                std::string target_dir = current_dir;
+                if (target_dir.empty()) {
+                    // fallback to first drive
+                    char drives[256];
+                    if (GetLogicalDriveStringsA(sizeof(drives), drives) > 0) {
+                        target_dir = std::string(drives);
+                    }
+                }
+                if (!target_dir.empty() && new_file_name[0] != '\0') {
+                    std::string path = target_dir + new_file_name;
+                    HANDLE h = CreateFileA(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+                }
+                // reset and close
+                new_file_name[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120,0))) {
+                new_file_name[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // New Folder modal
+        if (ImGui::BeginPopupModal("New Folder", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("Folder name", new_folder_name, sizeof(new_folder_name));
+            ImGui::Separator();
+            if (ImGui::Button("OK", ImVec2(120,0))) {
+                std::string target_dir = current_dir;
+                if (target_dir.empty()) {
+                    char drives[256];
+                    if (GetLogicalDriveStringsA(sizeof(drives), drives) > 0) {
+                        target_dir = std::string(drives);
+                    }
+                }
+                if (!target_dir.empty() && new_folder_name[0] != '\0') {
+                    std::string path = target_dir + new_folder_name;
+                    // Ensure trailing backslash not duplicated
+                    CreateDirectoryA(path.c_str(), NULL);
+                }
+                new_folder_name[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120,0))) {
+                new_folder_name[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // New Shortcut modal
+        if (ImGui::BeginPopupModal("New Shortcut", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("Shortcut name", new_shortcut_name, sizeof(new_shortcut_name));
+            ImGui::InputText("Target path", new_shortcut_target, sizeof(new_shortcut_target));
+            // Ensure the select popup is opened if requested
+            if (open_select_target_popup) {
+                ImGui::OpenPopup("Select Target");
+                open_select_target_popup = false;
+                // initialize selection preview
+                select_target_selected.clear();
+                select_preview[0] = '\0';
+            }
+            ImGui::Separator();
+            if (ImGui::Button("OK", ImVec2(120,0))) {
+                std::string target_dir = current_dir;
+                if (target_dir.empty()) {
+                    char drives[256];
+                    if (GetLogicalDriveStringsA(sizeof(drives), drives) > 0) {
+                        target_dir = std::string(drives);
+                    }
+                }
+                if (!target_dir.empty() && new_shortcut_name[0] != '\0' && new_shortcut_target[0] != '\0') {
+                    std::string shortcut_path = target_dir + std::string(new_shortcut_name) + ".lnk";
+                    // Create .lnk via COM
+                    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+                    if (SUCCEEDED(hr)) {
+                        IShellLinkW* psl = NULL;
+                        hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (void**)&psl);
+                        if (SUCCEEDED(hr) && psl) {
+                            // set the target
+                            WCHAR wtarget[MAX_PATH];
+                            MultiByteToWideChar(CP_UTF8, 0, new_shortcut_target, -1, wtarget, MAX_PATH);
+                            psl->SetPath(wtarget);
+                            // persist to disk
+                            IPersistFile* ppf = NULL;
+                            hr = psl->QueryInterface(IID_IPersistFile, (void**)&ppf);
+                            if (SUCCEEDED(hr) && ppf) {
+                                WCHAR wpath[MAX_PATH];
+                                MultiByteToWideChar(CP_UTF8, 0, shortcut_path.c_str(), -1, wpath, MAX_PATH);
+                                ppf->Save(wpath, TRUE);
+                                ppf->Release();
+                            }
+                            psl->Release();
+                        }
+                        CoUninitialize();
+                    }
+                }
+                new_shortcut_name[0] = '\0';
+                new_shortcut_target[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120,0))) {
+                new_shortcut_name[0] = '\0';
+                new_shortcut_target[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // Custom Select Target modal (drive/folder/file browser)
+        if (ImGui::BeginPopupModal("Select Target", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text(select_target_mode_file ? "Select File" : "Select Folder");
+            ImGui::Separator();
+            // Breadcrumb / current path
+            ImGui::TextWrapped("Current: %s", select_target_current.empty() ? "(Drives)" : select_target_current.c_str());
+
+            ImGui::BeginChild("##select_target_list", ImVec2(500,300), true);
+            if (select_target_current.empty()) {
+                // show drives
+                char drives[256];
+                DWORD ret = GetLogicalDriveStringsA(sizeof(drives), drives);
+                if (ret > 0) {
+                    for (char* d = drives; *d; d += strlen(d) + 1) {
+                        std::string drive_str = d;
+                        if (ImGui::Selectable(drive_str.c_str(), select_target_selected == drive_str)) {
+                            select_target_current = drive_str;
+                            select_target_selected = "";
+                        }
+                    }
+                }
+            } else {
+                // list parent directory '..'
+                if (ImGui::Selectable("..", false)) {
+                    if (select_target_current.size() > 3) {
+                        size_t pos = select_target_current.find_last_of("\\/", select_target_current.length() - 2);
+                        if (pos != std::string::npos) select_target_current = select_target_current.substr(0, pos + 1);
+                        else select_target_current.clear();
+                        select_target_selected.clear();
+                    } else {
+                        // at drive root -> go to drives
+                        select_target_current.clear();
+                        select_target_selected.clear();
+                    }
+                }
+                // enumerate entries
+                char search[MAX_PATH];
+                wsprintfA(search, "%s*", select_target_current.c_str());
+                WIN32_FIND_DATAA fd;
+                HANDLE h = FindFirstFileA(search, &fd);
+                if (h != INVALID_HANDLE_VALUE) {
+                    do {
+                        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+                        bool is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        std::string name = fd.cFileName;
+                        std::string label = is_dir ? ("[D] " + name) : name;
+                        std::string full = select_target_current + name + (is_dir ? "\\" : "");
+                        if (ImGui::Selectable(label.c_str(), select_target_selected == full)) {
+                            select_target_selected = full;
+                            strncpy_s(select_preview, sizeof(select_preview), full.c_str(), _TRUNCATE);
+                        }
+                        if (is_dir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                            select_target_current = full;
+                            select_target_selected.clear();
+                            select_preview[0] = '\0';
+                        }
+                    } while (FindNextFileA(h, &fd));
+                    FindClose(h);
+                }
+            }
+            ImGui::EndChild();
+
+            ImGui::Separator();
+            ImGui::InputText("Selected", select_preview, sizeof(select_preview));
+            ImGui::Separator();
+            if (ImGui::Button("OK", ImVec2(120,0))) {
+                if (select_target_mode_file) {
+                    if (select_target_selected.empty()) {
+                        // if no selection but current is a file path? ignore
+                    } else {
+                        // ensure selected is a file (not ending with backslash)
+                        std::string sel = select_target_selected;
+                        if (!sel.empty() && sel.back() != '\\') {
+                            strncpy_s(new_shortcut_target, sizeof(new_shortcut_target), sel.c_str(), _TRUNCATE);
+                        }
+                    }
+                } else {
+                    // folder mode: if selected is a folder or current is folder
+                    std::string sel = select_target_selected.empty() ? select_target_current : select_target_selected;
+                    if (!sel.empty()) {
+                        // strip trailing backslash for consistency
+                        if (sel.back() == '\\') sel.pop_back();
+                        strncpy_s(new_shortcut_target, sizeof(new_shortcut_target), sel.c_str(), _TRUNCATE);
+                    }
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120,0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         // Render ImGui
