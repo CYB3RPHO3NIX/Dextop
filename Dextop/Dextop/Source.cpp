@@ -212,6 +212,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             // Click to select drive
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                 current_dir = drive_str;
+                checked_items.clear();
+                checked_folder_size_cache.clear();
+                checked_folder_size_running.clear();
             }
             if (drive_open) {
                 // Enumerate folders and files in this drive
@@ -233,6 +236,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                             // Click to select folder
                             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                                 current_dir = folder_path;
+                                checked_items.clear();
+                                checked_folder_size_cache.clear();
+                                checked_folder_size_running.clear();
                             }
                             if (folder_open) {
                                 // Enumerate subfolders and files (one level deep)
@@ -254,6 +260,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                                         if (ImGui::Selectable(sub_label.c_str(), current_dir == sub_path, sub_flags)) {
                                             if (sub_is_dir) {
                                                 current_dir = sub_path;
+                                                checked_items.clear();
+                                                checked_folder_size_cache.clear();
+                                                checked_folder_size_running.clear();
                                             }
                                         }
                                     } while (FindNextFileA(hSubFind, &sub_find));
@@ -284,6 +293,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 size_t pos = current_dir.find_last_of("\\/", current_dir.length() - 2);
                 if (pos != std::string::npos) {
                     current_dir = current_dir.substr(0, pos + 1);
+                    checked_items.clear();
+                    checked_folder_size_cache.clear();
+                    checked_folder_size_running.clear();
                 }
             }
         }
@@ -424,6 +436,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 if (is_dir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
                     current_dir = full_path;
                     selected_item_fullpath.clear();
+                    checked_items.clear();
+                    checked_folder_size_cache.clear();
+                    checked_folder_size_running.clear();
                     // Cancel any running folder stats thread
                     if (folder_stats_running) {
                         folder_stats_cancel = true;
