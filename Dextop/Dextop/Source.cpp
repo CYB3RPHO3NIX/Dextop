@@ -7,29 +7,31 @@
 #include <GLFW/glfw3.h>
 #include <vector>
 #include <string>
+#include <atomic>
+#include <thread>
 
 // Helper struct for folder stats
 struct FolderStats {
     ULONGLONG size = 0;
-    int subfolders = 0;
-    int files = 0;
+    int files = 0; // total files (recursive)
 };
 
-// Recursively compute folder stats
-void GetFolderStatsRecursive(const std::string& folder, FolderStats& stats) {
+// Recursively compute folder stats (size and file count only)
+void GetFolderStatsRecursive(const std::string& folder, FolderStats& stats, std::atomic<bool>* cancel_flag = nullptr) {
+    if (cancel_flag && *cancel_flag) return;
     char search_path[MAX_PATH];
     snprintf(search_path, sizeof(search_path), "%s*", folder.c_str());
     WIN32_FIND_DATAA find_data;
     HANDLE hFind = FindFirstFileA(search_path, &find_data);
     if (hFind != INVALID_HANDLE_VALUE) {
         do {
+            if (cancel_flag && *cancel_flag) break;
             if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
                 continue;
             bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             if (is_dir) {
-                stats.subfolders++;
                 std::string subfolder = folder + find_data.cFileName + "\\";
-                GetFolderStatsRecursive(subfolder, stats);
+                GetFolderStatsRecursive(subfolder, stats, cancel_flag);
             } else {
                 stats.files++;
                 LARGE_INTEGER fsize;
@@ -88,6 +90,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     ImGui_ImplOpenGL3_Init("#version 130");
 
     bool show_window = true;
+    static bool show_preferences = false; // Controls Preferences window visibility
+    // Async folder stats state
+    static std::thread folder_stats_thread;
+    static std::atomic<bool> folder_stats_running = false;
+    static std::atomic<bool> folder_stats_cancel = false;
+    static std::string folder_stats_path;
+    static FolderStats folder_stats_result;
 
     // Track current directory for central window
     std::string current_dir = "C:\\"; // Start at C:\
@@ -155,7 +164,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             }
             // Add Settings menu
             if (ImGui::BeginMenu("Settings")) {
-                if (ImGui::MenuItem("Preferences")) { /* handle Preferences */ }
+                if (ImGui::MenuItem("Preferences")) { show_preferences = true; }
                 if (ImGui::MenuItem("Themes")) { /* handle Themes */ }
                 ImGui::EndMenu();
             }
@@ -279,8 +288,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         static bool selected_item_is_dir = false;
         static std::string selected_item_fullpath;
         static ULONGLONG selected_file_size = 0;
-        static int selected_folder_subfolders = 0;
-        static int selected_folder_files = 0;
+        static int selected_folder_subfolders = 0; // immediate subfolders (non-recursive)
+        static int selected_folder_files = 0;      // immediate files (non-recursive)
         static ULONGLONG selected_folder_size = 0;
         ImGui::Columns(2, nullptr, true);
         ImGui::Text("Name"); ImGui::NextColumn();
@@ -322,19 +331,61 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                             }
                             CloseHandle(hFile);
                         }
+                // Cancel any running folder stats thread
+                if (folder_stats_running) {
+                    folder_stats_cancel = true;
+                    if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                    folder_stats_running = false;
+                }
                     } else {
-                        // Recursively count subfolders, files, and sum file sizes
-                        FolderStats stats;
-                        GetFolderStatsRecursive(full_path, stats);
-                        selected_folder_subfolders = stats.subfolders;
-                        selected_folder_files = stats.files;
-                        selected_folder_size = stats.size;
+                        // Cancel any running folder stats thread
+                        if (folder_stats_running) {
+                            folder_stats_cancel = true;
+                            if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                            folder_stats_running = false;
+                        }
+                        // Count immediate subfolders and files (non-recursive)
+                        char sub_search[MAX_PATH];
+                        wsprintfA(sub_search, "%s*", full_path.c_str());
+                        WIN32_FIND_DATAA sub_find;
+                        HANDLE hSubFind = FindFirstFileA(sub_search, &sub_find);
+                        if (hSubFind != INVALID_HANDLE_VALUE) {
+                            do {
+                                if (strcmp(sub_find.cFileName, ".") == 0 || strcmp(sub_find.cFileName, "..") == 0)
+                                    continue;
+                                if (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                                    selected_folder_subfolders++;
+                                else
+                                    selected_folder_files++;
+                            } while (FindNextFileA(hSubFind, &sub_find));
+                            FindClose(hSubFind);
+                        }
+                        // Start async folder stats computation (recursive size and file count)
+                        folder_stats_path = full_path;
+                        folder_stats_result = FolderStats();
+                        folder_stats_cancel = false;
+                        folder_stats_running = true;
+                        folder_stats_thread = std::thread([full_path]() {
+                            FolderStats stats;
+                            GetFolderStatsRecursive(full_path, stats, &folder_stats_cancel);
+                            if (!folder_stats_cancel) {
+                                folder_stats_result = stats;
+                            }
+                            folder_stats_running = false;
+                        });
+                        if (folder_stats_thread.joinable()) folder_stats_thread.detach();
                     }
                 }
                 // Double click: open folder
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && is_dir) {
                     current_dir = full_path;
                     selected_item_fullpath.clear();
+                    // Cancel any running folder stats thread
+                    if (folder_stats_running) {
+                        folder_stats_cancel = true;
+                        if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                        folder_stats_running = false;
+                    }
                 }
                 ImGui::NextColumn();
                 if (is_dir) {
@@ -364,19 +415,25 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         ImGui::Begin("##statusbar", nullptr, statusbar_flags);
         if (!selected_item_fullpath.empty()) {
             if (selected_item_is_dir) {
-                // Format folder size dynamically
-                char size_str[64];
-                double size = (double)selected_folder_size;
-                if (size < 1024) {
-                    snprintf(size_str, sizeof(size_str), "%llu bytes", selected_folder_size);
-                } else if (size < 1024 * 1024) {
-                    snprintf(size_str, sizeof(size_str), "%.2f KB (%llu bytes)", size / 1024.0, selected_folder_size);
-                } else if (size < 1024 * 1024 * 1024) {
-                    snprintf(size_str, sizeof(size_str), "%.2f MB (%llu bytes)", size / (1024.0 * 1024.0), selected_folder_size);
+                if (folder_stats_running && folder_stats_path == selected_item_fullpath) {
+                    ImGui::Text("Folder: %s | Subfolders: %d | Files: %d | Size: Calculating...", selected_item_name.c_str(), selected_folder_subfolders, selected_folder_files);
+                } else if (folder_stats_path == selected_item_fullpath) {
+                    // Format folder size dynamically
+                    char size_str[64];
+                    double size = (double)folder_stats_result.size;
+                    if (size < 1024) {
+                        snprintf(size_str, sizeof(size_str), "%llu bytes", folder_stats_result.size);
+                    } else if (size < 1024 * 1024) {
+                        snprintf(size_str, sizeof(size_str), "%.2f KB (%llu bytes)", size / 1024.0, folder_stats_result.size);
+                    } else if (size < 1024 * 1024 * 1024) {
+                        snprintf(size_str, sizeof(size_str), "%.2f MB (%llu bytes)", size / (1024.0 * 1024.0), folder_stats_result.size);
+                    } else {
+                        snprintf(size_str, sizeof(size_str), "%.2f GB (%llu bytes)", size / (1024.0 * 1024.0 * 1024.0), folder_stats_result.size);
+                    }
+                    ImGui::Text("Folder: %s | Subfolders: %d | Files: %d | Size: %s", selected_item_name.c_str(), selected_folder_subfolders, selected_folder_files, size_str);
                 } else {
-                    snprintf(size_str, sizeof(size_str), "%.2f GB (%llu bytes)", size / (1024.0 * 1024.0 * 1024.0), selected_folder_size);
+                    ImGui::Text("Folder: %s | Subfolders: %d | Files: %d", selected_item_name.c_str(), selected_folder_subfolders, selected_folder_files);
                 }
-                ImGui::Text("Folder: %s | Subfolders: %d | Files: %d | Size: %s", selected_item_name.c_str(), selected_folder_subfolders, selected_folder_files, size_str);
             } else {
                 // Format file size dynamically
                 char size_str[64];
@@ -398,6 +455,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             ImGui::Text("Folders: %d | Files: %d", folder_count, file_count);
         }
         ImGui::End();
+
+        // Preferences window
+        if (show_preferences) {
+            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Preferences", &show_preferences, ImGuiWindowFlags_NoCollapse)) {
+                ImGui::Text("Preferences");
+                ImGui::Separator();
+                ImGui::Text("(Add your preferences UI here)");
+            }
+            ImGui::End();
+        }
 
         // Render ImGui
         ImGui::Render();
