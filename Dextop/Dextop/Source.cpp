@@ -107,6 +107,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
     std::vector<std::string> dir_stack; // For going up
 
+    // Add a global variable for the preference
+    static bool pref_show_item_checkboxes = false;
+
     // Main loop
     while (show_window && !glfwWindowShouldClose(window))
     {
@@ -291,6 +294,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         static int selected_folder_subfolders = 0; // immediate subfolders (non-recursive)
         static int selected_folder_files = 0;      // immediate files (non-recursive)
         static ULONGLONG selected_folder_size = 0;
+        // --- Add for item checkboxes ---
+        static std::vector<std::string> checked_items; // store full paths
+        static ULONGLONG checked_total_size = 0;
+        checked_total_size = 0;
+        int checked_count = 0;
+        // --- End add ---
         ImGui::Columns(2, nullptr, true);
         ImGui::Text("Name"); ImGui::NextColumn();
         ImGui::Text("Type"); ImGui::NextColumn();
@@ -312,6 +321,23 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 std::string label = std::string(is_dir ? "[+] " : "[-] ") + item_name;
                 std::string full_path = current_dir + item_name + (is_dir ? "\\" : "");
                 bool is_selected = (selected_item_fullpath == full_path);
+                // --- Checkbox logic ---
+                bool checked = false;
+                if (pref_show_item_checkboxes) {
+                    auto it = std::find(checked_items.begin(), checked_items.end(), full_path);
+                    checked = (it != checked_items.end());
+                    ImGui::PushID(item_index);
+                    if (ImGui::Checkbox("", &checked)) {
+                        if (checked) {
+                            checked_items.push_back(full_path);
+                        } else {
+                            checked_items.erase(std::remove(checked_items.begin(), checked_items.end(), full_path), checked_items.end());
+                        }
+                    }
+                    ImGui::PopID();
+                    ImGui::SameLine();
+                }
+                // --- End Checkbox logic ---
                 if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
                     // Single click: select item
                     selected_item_name = item_name;
@@ -331,12 +357,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                             }
                             CloseHandle(hFile);
                         }
-                // Cancel any running folder stats thread
-                if (folder_stats_running) {
-                    folder_stats_cancel = true;
-                    if (folder_stats_thread.joinable()) folder_stats_thread.join();
-                    folder_stats_running = false;
-                }
+                        // Cancel any running folder stats thread
+                        if (folder_stats_running) {
+                            folder_stats_cancel = true;
+                            if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                            folder_stats_running = false;
+                        }
                     } else {
                         // Cancel any running folder stats thread
                         if (folder_stats_running) {
@@ -376,17 +402,21 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                         if (folder_stats_thread.joinable()) folder_stats_thread.detach();
                     }
                 }
-                // Double click: open folder
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && is_dir) {
-                    current_dir = full_path;
-                    selected_item_fullpath.clear();
-                    // Cancel any running folder stats thread
-                    if (folder_stats_running) {
-                        folder_stats_cancel = true;
-                        if (folder_stats_thread.joinable()) folder_stats_thread.join();
-                        folder_stats_running = false;
+                // --- Calculate checked size/count ---
+                if (pref_show_item_checkboxes && checked) {
+                    checked_count++;
+                    if (!is_dir) {
+                        HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                        if (hFile != INVALID_HANDLE_VALUE) {
+                            LARGE_INTEGER size;
+                            if (GetFileSizeEx(hFile, &size)) {
+                                checked_total_size += size.QuadPart;
+                            }
+                            CloseHandle(hFile);
+                        }
                     }
                 }
+                // --- End checked size/count ---
                 ImGui::NextColumn();
                 if (is_dir) {
                     ImGui::TextUnformatted("folder");
@@ -404,6 +434,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             FindClose(hFind);
         }
         ImGui::Columns(1);
+        // --- Show checked summary ---
+        if (pref_show_item_checkboxes) {
+            char checked_info[128];
+            double size = (double)checked_total_size;
+            if (size < 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %llu bytes", checked_count, checked_total_size);
+            } else if (size < 1024 * 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f KB", checked_count, size / 1024.0);
+            } else if (size < 1024 * 1024 * 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f MB", checked_count, size / (1024.0 * 1024.0));
+            } else {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f GB", checked_count, size / (1024.0 * 1024.0 * 1024.0));
+            }
+            ImGui::Text("%s", checked_info);
+        }
+        // --- End checked summary ---
         ImGui::End();
 
         // Draw fixed status bar at the bottom
@@ -458,11 +504,60 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
         // Preferences window
         if (show_preferences) {
-            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Preferences", &show_preferences, ImGuiWindowFlags_NoCollapse)) {
-                ImGui::Text("Preferences");
-                ImGui::Separator();
-                ImGui::Text("(Add your preferences UI here)");
+                // --- Preferences Sections ---
+                static const char* sections[] = { "General", "Appearance", "Shortcuts" };
+                static int selected_section = 0;
+
+                ImGui::BeginChild("##prefs_sidebar", ImVec2(150, 0), true, ImGuiWindowFlags_NoMove);
+                for (int i = 0; i < IM_ARRAYSIZE(sections); ++i) {
+                    if (ImGui::Selectable(sections[i], selected_section == i)) {
+                        selected_section = i;
+                    }
+                }
+                ImGui::EndChild();
+
+                ImGui::SameLine();
+
+                ImGui::BeginChild("##prefs_mainpanel", ImVec2(0, -50), false, ImGuiWindowFlags_NoMove);
+                if (selected_section == 0) {
+                    ImGui::Text("General Settings");
+                    ImGui::Separator();
+                    ImGui::Text("(Add general settings here)");
+                } else if (selected_section == 1) {
+                    ImGui::Text("Appearance Settings");
+                    ImGui::Separator();
+                    ImGui::Text("(Add appearance settings here)");
+                } else if (selected_section == 2) {
+                    ImGui::Text("Shortcuts");
+                    ImGui::Separator();
+                    ImGui::Text("(Add shortcut settings here)");
+                }
+                ImGui::EndChild();
+
+                // --- BUTTONS AT BOTTOM RIGHT ---
+                float button_width = 80.0f;
+                float spacing = 10.0f;
+                ImVec2 button_size(button_width, 0);
+
+                float window_w = ImGui::GetWindowWidth();
+                float button_area_w = button_width * 2 + spacing;
+                ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 40);
+                ImGui::SetCursorPosX(window_w - button_area_w - ImGui::GetStyle().WindowPadding.x);
+
+                if (ImGui::Button("OK", button_size)) {
+                    ImGui::SaveIniSettingsToDisk("Dextop/imgui.ini");
+                    show_preferences = false;
+                }
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::Button("Cancel", button_size)) {
+                    show_preferences = false;
+                }
+                ImGui::PopStyleColor(2);
+                // --- END BUTTONS ---
             }
             ImGui::End();
         }
