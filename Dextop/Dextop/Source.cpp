@@ -47,6 +47,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     style.Colors[ImGuiCol_TitleBg]        = ImVec4(0.15f, 0.15f, 0.15f, 1.0f); // dark grey for inactive window title bar
     style.Colors[ImGuiCol_TitleBgActive]  = ImVec4(0.10f, 0.40f, 0.80f, 1.0f); // blue for active window title bar
     style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.10f, 0.10f, 0.10f, 1.0f); // dark for collapsed window title bar
+    style.FrameRounding = 2.0f; // Reduced curve for all buttons except Exit
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -56,6 +57,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
     // Track current directory for central window
     std::string current_dir = "C:\\"; // Start at C:\
+    std::string selected_side_path = current_dir; // For side panel selection sync
     std::vector<std::string> dir_stack; // For going up
 
     // Main loop
@@ -125,9 +127,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - button_width - margin);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));         // light red
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));  // red
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f); // No rounding for Exit button
             if (ImGui::Button("Exit", ImVec2(button_width, 0))) {
                 show_window = false;
             }
+            ImGui::PopStyleVar();
             ImGui::PopStyleColor(2);
             ImGui::EndMenuBar();
         }
@@ -143,7 +147,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         char drives[256];
         DWORD drive_count = GetLogicalDriveStringsA(sizeof(drives), drives);
         for (char* drive = drives; *drive; drive += strlen(drive) + 1) {
-            if (ImGui::TreeNode(drive)) {
+            std::string drive_str = drive;
+            bool drive_selected = (current_dir == drive_str);
+            ImGuiTreeNodeFlags drive_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+            if (drive_selected) drive_flags |= ImGuiTreeNodeFlags_Selected;
+            bool drive_open = ImGui::TreeNodeEx(drive, drive_flags);
+            // Click to select drive
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                current_dir = drive_str;
+            }
+            if (drive_open) {
                 // Enumerate folders and files in this drive
                 char search_path[MAX_PATH];
                 wsprintfA(search_path, "%s*", drive);
@@ -154,13 +167,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                         if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
                             continue;
                         bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        std::string folder_path = drive_str + std::string(find_data.cFileName) + "\\";
                         std::string label = std::string(is_dir ? "[+] " : "[-] ") + find_data.cFileName;
                         if (is_dir) {
-                            // Build full path for subfolder
-                            char subfolder_path[MAX_PATH];
-                            wsprintfA(subfolder_path, "%s%s\\", drive, find_data.cFileName);
-                            if (ImGui::TreeNode(label.c_str())) {
+                            ImGuiTreeNodeFlags folder_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+                            if (current_dir == folder_path) folder_flags |= ImGuiTreeNodeFlags_Selected;
+                            bool folder_open = ImGui::TreeNodeEx(label.c_str(), folder_flags);
+                            // Click to select folder
+                            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                                current_dir = folder_path;
+                            }
+                            if (folder_open) {
                                 // Enumerate subfolders and files (one level deep)
+                                char subfolder_path[MAX_PATH];
+                                wsprintfA(subfolder_path, "%s%s\\", drive, find_data.cFileName);
                                 char sub_search[MAX_PATH];
                                 wsprintfA(sub_search, "%s*", subfolder_path);
                                 WIN32_FIND_DATAA sub_find;
@@ -171,7 +191,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                                             continue;
                                         bool sub_is_dir = (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
                                         std::string sub_label = std::string(sub_is_dir ? "[+] " : "[-] ") + sub_find.cFileName;
-                                        ImGui::BulletText("%s", sub_label.c_str());
+                                        std::string sub_path = folder_path + sub_find.cFileName + "\\";
+                                        ImGuiTreeNodeFlags sub_flags = 0;
+                                        if (current_dir == sub_path) sub_flags |= ImGuiTreeNodeFlags_Selected;
+                                        if (ImGui::Selectable(sub_label.c_str(), current_dir == sub_path, sub_flags)) {
+                                            if (sub_is_dir) {
+                                                current_dir = sub_path;
+                                            }
+                                        }
                                     } while (FindNextFileA(hSubFind, &sub_find));
                                     FindClose(hSubFind);
                                 }
@@ -194,22 +221,25 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         ImGui::SetNextWindowSize(center_size);
         ImGuiWindowFlags center_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
         ImGui::Begin("Central Window", nullptr, center_flags);
-        ImGui::Text("Current Directory: %s", current_dir.c_str());
-        ImGui::Separator();
-
-        // Go up one directory
-        if (current_dir != "C:\\") {
-            if (ImGui::Selectable("..", false, ImGuiSelectableFlags_AllowDoubleClick)) {
-                if (ImGui::IsMouseDoubleClicked(0)) {
-                    size_t pos = current_dir.find_last_of("\\/", current_dir.length() - 2);
-                    if (pos != std::string::npos) {
-                        current_dir = current_dir.substr(0, pos + 1);
-                    }
+        // Always show Back button, only navigate if not at root
+        if (ImGui::Button("Back")) {
+            if (current_dir != "C:\\") {
+                size_t pos = current_dir.find_last_of("\\/", current_dir.length() - 2);
+                if (pos != std::string::npos) {
+                    current_dir = current_dir.substr(0, pos + 1);
                 }
             }
         }
+        ImGui::SameLine();
+        ImGui::Text("Current Directory: %s", current_dir.c_str());
+        ImGui::Separator();
 
-        // List folders and files
+        // List folders and files with type column
+        ImGui::Columns(2, nullptr, true);
+        ImGui::Text("Name"); ImGui::NextColumn();
+        ImGui::Text("Type"); ImGui::NextColumn();
+        ImGui::Separator();
+
         char search_path[MAX_PATH];
         wsprintfA(search_path, "%s*", current_dir.c_str());
         WIN32_FIND_DATAA find_data;
@@ -221,15 +251,30 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
                 std::string item_name = find_data.cFileName;
                 std::string label = std::string(is_dir ? "[+] " : "[-] ") + item_name;
-                if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                bool selected = false;
+                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
                     if (ImGui::IsMouseDoubleClicked(0) && is_dir) {
                         // Navigate into folder
                         current_dir += item_name + "\\";
                     }
                 }
+                ImGui::NextColumn();
+                if (is_dir) {
+                    ImGui::TextUnformatted("folder");
+                } else {
+                    // Get file extension
+                    const char* ext = strrchr(item_name.c_str(), '.');
+                    if (ext && ext != item_name.c_str()) {
+                        ImGui::TextUnformatted(ext + 1); // skip the dot
+                    } else {
+                        ImGui::TextUnformatted("file");
+                    }
+                }
+                ImGui::NextColumn();
             } while (FindNextFileA(hFind, &find_data));
             FindClose(hFind);
         }
+        ImGui::Columns(1);
         ImGui::End();
 
         // Draw fixed status bar at the bottom
