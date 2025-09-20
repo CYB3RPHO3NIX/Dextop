@@ -5,6 +5,8 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
+#include <vector>
+#include <string>
 
 // If using a different backend (e.g., DirectX), adjust includes and init accordingly.
 
@@ -51,6 +53,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     ImGui_ImplOpenGL3_Init("#version 130");
 
     bool show_window = true;
+
+    // Track current directory for central window
+    std::string current_dir = "C:\\"; // Start at C:\
+    std::vector<std::string> dir_stack; // For going up
 
     // Main loop
     while (show_window && !glfwWindowShouldClose(window))
@@ -138,37 +144,41 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         DWORD drive_count = GetLogicalDriveStringsA(sizeof(drives), drives);
         for (char* drive = drives; *drive; drive += strlen(drive) + 1) {
             if (ImGui::TreeNode(drive)) {
-                // Enumerate folders in this drive
+                // Enumerate folders and files in this drive
                 char search_path[MAX_PATH];
                 wsprintfA(search_path, "%s*", drive);
                 WIN32_FIND_DATAA find_data;
                 HANDLE hFind = FindFirstFileA(search_path, &find_data);
                 if (hFind != INVALID_HANDLE_VALUE) {
                     do {
-                        if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-                            strcmp(find_data.cFileName, ".") != 0 &&
-                            strcmp(find_data.cFileName, "..") != 0) {
+                        if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
+                            continue;
+                        bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        std::string label = std::string(is_dir ? "[+] " : "[-] ") + find_data.cFileName;
+                        if (is_dir) {
                             // Build full path for subfolder
                             char subfolder_path[MAX_PATH];
                             wsprintfA(subfolder_path, "%s%s\\", drive, find_data.cFileName);
-                            if (ImGui::TreeNode(find_data.cFileName)) {
-                                // Enumerate subfolders (one level deep)
+                            if (ImGui::TreeNode(label.c_str())) {
+                                // Enumerate subfolders and files (one level deep)
                                 char sub_search[MAX_PATH];
                                 wsprintfA(sub_search, "%s*", subfolder_path);
                                 WIN32_FIND_DATAA sub_find;
                                 HANDLE hSubFind = FindFirstFileA(sub_search, &sub_find);
                                 if (hSubFind != INVALID_HANDLE_VALUE) {
                                     do {
-                                        if ((sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-                                            strcmp(sub_find.cFileName, ".") != 0 &&
-                                            strcmp(sub_find.cFileName, "..") != 0) {
-                                            ImGui::BulletText("%s", sub_find.cFileName);
-                                        }
+                                        if (strcmp(sub_find.cFileName, ".") == 0 || strcmp(sub_find.cFileName, "..") == 0)
+                                            continue;
+                                        bool sub_is_dir = (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                                        std::string sub_label = std::string(sub_is_dir ? "[+] " : "[-] ") + sub_find.cFileName;
+                                        ImGui::BulletText("%s", sub_label.c_str());
                                     } while (FindNextFileA(hSubFind, &sub_find));
                                     FindClose(hSubFind);
                                 }
                                 ImGui::TreePop();
                             }
+                        } else {
+                            ImGui::BulletText("%s", label.c_str());
                         }
                     } while (FindNextFileA(hFind, &find_data));
                     FindClose(hFind);
@@ -184,7 +194,42 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         ImGui::SetNextWindowSize(center_size);
         ImGuiWindowFlags center_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
         ImGui::Begin("Central Window", nullptr, center_flags);
-        ImGui::Text("Central Window Content");
+        ImGui::Text("Current Directory: %s", current_dir.c_str());
+        ImGui::Separator();
+
+        // Go up one directory
+        if (current_dir != "C:\\") {
+            if (ImGui::Selectable("..", false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                if (ImGui::IsMouseDoubleClicked(0)) {
+                    size_t pos = current_dir.find_last_of("\\/", current_dir.length() - 2);
+                    if (pos != std::string::npos) {
+                        current_dir = current_dir.substr(0, pos + 1);
+                    }
+                }
+            }
+        }
+
+        // List folders and files
+        char search_path[MAX_PATH];
+        wsprintfA(search_path, "%s*", current_dir.c_str());
+        WIN32_FIND_DATAA find_data;
+        HANDLE hFind = FindFirstFileA(search_path, &find_data);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
+                    continue;
+                bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                std::string item_name = find_data.cFileName;
+                std::string label = std::string(is_dir ? "[+] " : "[-] ") + item_name;
+                if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    if (ImGui::IsMouseDoubleClicked(0) && is_dir) {
+                        // Navigate into folder
+                        current_dir += item_name + "\\";
+                    }
+                }
+            } while (FindNextFileA(hFind, &find_data));
+            FindClose(hFind);
+        }
         ImGui::End();
 
         // Draw fixed status bar at the bottom
