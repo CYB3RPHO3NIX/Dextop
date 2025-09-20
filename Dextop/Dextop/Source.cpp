@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <map>
+#include "json_utils.hpp"
 
 // Helper struct for folder stats
 struct FolderStats {
@@ -271,6 +272,46 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     // Add a global variable for the preference
     static bool pref_show_item_checkboxes = false;
     static std::vector<std::string> checked_items; // store full paths
+    // Persisted selected section for preferences (moved out so we can load/save it)
+    static int selected_section = 0;
+
+    // Load preferences from config.json if available
+    {
+        nlohmann::json cfg;
+        // Default preferences
+        nlohmann::json default_cfg = {
+            {"show_item_checkboxes", false},
+            {"selected_section", 0}
+        };
+
+        bool loaded = read_json_file("config.json", cfg);
+        if (!loaded) {
+            // If reading failed (missing or invalid), create a new config file with defaults
+            cfg = default_cfg;
+            write_json_file("config.json", cfg);
+        }
+
+        // Merge loaded config with defaults to ensure all keys exist
+        // If a key is missing or of wrong type, set it to default and mark to persist
+        bool need_persist = false;
+        if (cfg.contains("show_item_checkboxes") && cfg["show_item_checkboxes"].is_boolean()) {
+            pref_show_item_checkboxes = cfg["show_item_checkboxes"].get<bool>();
+        } else {
+            cfg["show_item_checkboxes"] = default_cfg["show_item_checkboxes"];
+            need_persist = true;
+        }
+        if (cfg.contains("selected_section") && cfg["selected_section"].is_number_integer()) {
+            selected_section = cfg["selected_section"].get<int>();
+        } else {
+            cfg["selected_section"] = default_cfg["selected_section"];
+            need_persist = true;
+        }
+
+        if (need_persist) {
+            write_json_file("config.json", cfg);
+        }
+    }
+
     // --- Folder size cache and async state for checkboxes ---
     static std::unordered_map<std::string, ULONGLONG> checked_folder_size_cache;
     static std::unordered_map<std::string, std::atomic<bool>> checked_folder_size_running;
@@ -722,7 +763,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Preferences", &show_preferences, ImGuiWindowFlags_NoCollapse)) {
                 static const char* sections[] = { "Show", "General", "Appearance", "Shortcuts" };
-                static int selected_section = 0;
                 ImGui::BeginChild("##prefs_sidebar", ImVec2(150, 0), true, ImGuiWindowFlags_NoMove);
                 for (int i = 0; i < IM_ARRAYSIZE(sections); ++i) {
                     if (ImGui::Selectable(sections[i], selected_section == i)) {
@@ -759,7 +799,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 40);
                 ImGui::SetCursorPosX(window_w - button_area_w - ImGui::GetStyle().WindowPadding.x);
                 if (ImGui::Button("OK", button_size)) {
-                    ImGui::SaveIniSettingsToDisk("Dextop/imgui.ini");
+                    ImGui::SaveIniSettingsToDisk("imgui.ini");
+                    // Save preferences to config.json
+                    nlohmann::json cfg;
+                    cfg["show_item_checkboxes"] = pref_show_item_checkboxes;
+                    cfg["selected_section"] = selected_section;
+                    // write to disk (returns true on success)
+                    if (!write_json_file("config.json", cfg)) {
+                        // Could log an error or show notification - omitted for brevity
+                    }
                     show_preferences = false;
                 }
                 ImGui::SameLine();
