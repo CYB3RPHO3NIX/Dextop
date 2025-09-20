@@ -8,6 +8,40 @@
 #include <vector>
 #include <string>
 
+// Helper struct for folder stats
+struct FolderStats {
+    ULONGLONG size = 0;
+    int subfolders = 0;
+    int files = 0;
+};
+
+// Recursively compute folder stats
+void GetFolderStatsRecursive(const std::string& folder, FolderStats& stats) {
+    char search_path[MAX_PATH];
+    snprintf(search_path, sizeof(search_path), "%s*", folder.c_str());
+    WIN32_FIND_DATAA find_data;
+    HANDLE hFind = FindFirstFileA(search_path, &find_data);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
+                continue;
+            bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (is_dir) {
+                stats.subfolders++;
+                std::string subfolder = folder + find_data.cFileName + "\\";
+                GetFolderStatsRecursive(subfolder, stats);
+            } else {
+                stats.files++;
+                LARGE_INTEGER fsize;
+                fsize.HighPart = find_data.nFileSizeHigh;
+                fsize.LowPart = find_data.nFileSizeLow;
+                stats.size += fsize.QuadPart;
+            }
+        } while (FindNextFileA(hFind, &find_data));
+        FindClose(hFind);
+    }
+}
+
 // If using a different backend (e.g., DirectX), adjust includes and init accordingly.
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
@@ -58,6 +92,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     // Track current directory for central window
     std::string current_dir = "C:\\"; // Start at C:\
     std::string selected_side_path = current_dir; // For side panel selection sync
+    std::string selected_item_name; // For main panel selection
+    bool selected_item_is_dir = false;
+    std::string selected_item_fullpath;
+
     std::vector<std::string> dir_stack; // For going up
 
     // Main loop
@@ -235,6 +273,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         ImGui::Separator();
 
         // List folders and files with type column
+        int folder_count = 0;
+        int file_count = 0;
+        static std::string selected_item_name;
+        static bool selected_item_is_dir = false;
+        static std::string selected_item_fullpath;
+        static ULONGLONG selected_file_size = 0;
+        static int selected_folder_subfolders = 0;
+        static int selected_folder_files = 0;
+        static ULONGLONG selected_folder_size = 0;
         ImGui::Columns(2, nullptr, true);
         ImGui::Text("Name"); ImGui::NextColumn();
         ImGui::Text("Type"); ImGui::NextColumn();
@@ -244,33 +291,64 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         wsprintfA(search_path, "%s*", current_dir.c_str());
         WIN32_FIND_DATAA find_data;
         HANDLE hFind = FindFirstFileA(search_path, &find_data);
+        int item_index = 0;
+        int selected_index = -1;
         if (hFind != INVALID_HANDLE_VALUE) {
             do {
                 if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
                     continue;
                 bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                if (is_dir) folder_count++; else file_count++;
                 std::string item_name = find_data.cFileName;
                 std::string label = std::string(is_dir ? "[+] " : "[-] ") + item_name;
-                bool selected = false;
-                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
-                    if (ImGui::IsMouseDoubleClicked(0) && is_dir) {
-                        // Navigate into folder
-                        current_dir += item_name + "\\";
+                std::string full_path = current_dir + item_name + (is_dir ? "\\" : "");
+                bool is_selected = (selected_item_fullpath == full_path);
+                if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
+                    // Single click: select item
+                    selected_item_name = item_name;
+                    selected_item_is_dir = is_dir;
+                    selected_item_fullpath = full_path;
+                    selected_file_size = 0;
+                    selected_folder_subfolders = 0;
+                    selected_folder_files = 0;
+                    selected_folder_size = 0;
+                    if (!is_dir) {
+                        // Get file size
+                        HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                        if (hFile != INVALID_HANDLE_VALUE) {
+                            LARGE_INTEGER size;
+                            if (GetFileSizeEx(hFile, &size)) {
+                                selected_file_size = size.QuadPart;
+                            }
+                            CloseHandle(hFile);
+                        }
+                    } else {
+                        // Recursively count subfolders, files, and sum file sizes
+                        FolderStats stats;
+                        GetFolderStatsRecursive(full_path, stats);
+                        selected_folder_subfolders = stats.subfolders;
+                        selected_folder_files = stats.files;
+                        selected_folder_size = stats.size;
                     }
+                }
+                // Double click: open folder
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && is_dir) {
+                    current_dir = full_path;
+                    selected_item_fullpath.clear();
                 }
                 ImGui::NextColumn();
                 if (is_dir) {
                     ImGui::TextUnformatted("folder");
                 } else {
-                    // Get file extension
                     const char* ext = strrchr(item_name.c_str(), '.');
                     if (ext && ext != item_name.c_str()) {
-                        ImGui::TextUnformatted(ext + 1); // skip the dot
+                        ImGui::TextUnformatted(ext + 1);
                     } else {
                         ImGui::TextUnformatted("file");
                     }
                 }
                 ImGui::NextColumn();
+                item_index++;
             } while (FindNextFileA(hFind, &find_data));
             FindClose(hFind);
         }
@@ -284,7 +362,41 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         ImGuiWindowFlags statusbar_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
         ImGui::Begin("##statusbar", nullptr, statusbar_flags);
-        ImGui::TextUnformatted("Status: Ready");
+        if (!selected_item_fullpath.empty()) {
+            if (selected_item_is_dir) {
+                // Format folder size dynamically
+                char size_str[64];
+                double size = (double)selected_folder_size;
+                if (size < 1024) {
+                    snprintf(size_str, sizeof(size_str), "%llu bytes", selected_folder_size);
+                } else if (size < 1024 * 1024) {
+                    snprintf(size_str, sizeof(size_str), "%.2f KB (%llu bytes)", size / 1024.0, selected_folder_size);
+                } else if (size < 1024 * 1024 * 1024) {
+                    snprintf(size_str, sizeof(size_str), "%.2f MB (%llu bytes)", size / (1024.0 * 1024.0), selected_folder_size);
+                } else {
+                    snprintf(size_str, sizeof(size_str), "%.2f GB (%llu bytes)", size / (1024.0 * 1024.0 * 1024.0), selected_folder_size);
+                }
+                ImGui::Text("Folder: %s | Subfolders: %d | Files: %d | Size: %s", selected_item_name.c_str(), selected_folder_subfolders, selected_folder_files, size_str);
+            } else {
+                // Format file size dynamically
+                char size_str[64];
+                double size = (double)selected_file_size;
+                if (size < 1024) {
+                    snprintf(size_str, sizeof(size_str), "%llu bytes", selected_file_size);
+                } else if (size < 1024 * 1024) {
+                    snprintf(size_str, sizeof(size_str), "%.2f KB (%llu bytes)", size / 1024.0, selected_file_size);
+                } else if (size < 1024 * 1024 * 1024) {
+                    snprintf(size_str, sizeof(size_str), "%.2f MB (%llu bytes)", size / (1024.0 * 1024.0), selected_file_size);
+                } else {
+                    snprintf(size_str, sizeof(size_str), "%.2f GB (%llu bytes)", size / (1024.0 * 1024.0 * 1024.0), selected_file_size);
+                }
+                ImGui::Text("File: %s | Type: %s | Size: %s", selected_item_name.c_str(),
+                    (strrchr(selected_item_name.c_str(), '.') ? strrchr(selected_item_name.c_str(), '.') + 1 : "file"),
+                    size_str);
+            }
+        } else {
+            ImGui::Text("Folders: %d | Files: %d", folder_count, file_count);
+        }
         ImGui::End();
 
         // Render ImGui
