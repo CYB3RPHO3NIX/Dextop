@@ -9,6 +9,10 @@
 #include <string>
 #include <atomic>
 #include <thread>
+#include <unordered_map>
+#include <mutex>
+#include <map>
+#include "json_utils.hpp"
 
 // Helper struct for folder stats
 struct FolderStats {
@@ -43,6 +47,164 @@ void GetFolderStatsRecursive(const std::string& folder, FolderStats& stats, std:
         FindClose(hFind);
     }
 }
+
+// --- File type mapping function ---
+std::string GetFileTypeName(const std::string& ext) {
+    static const std::map<std::string, std::string> type_map = {
+        {"pdf", "Portable Document Format"},
+        {"swf", "Shockwave Flash Format"},
+        {"txt", "Text Document"},
+        {"doc", "Microsoft Word Document"},
+        {"docx", "Microsoft Word Document"},
+        {"xls", "Microsoft Excel Spreadsheet"},
+        {"xlsx", "Microsoft Excel Spreadsheet"},
+        {"ppt", "Microsoft PowerPoint Presentation"},
+        {"pptx", "Microsoft PowerPoint Presentation"},
+        {"jpg", "JPEG Image"},
+        {"jpeg", "JPEG Image"},
+        {"png", "Portable Network Graphics"},
+        {"gif", "Graphics Interchange Format"},
+        {"bmp", "Bitmap Image"},
+        {"tiff", "Tagged Image File Format"},
+        {"svg", "Scalable Vector Graphics"},
+        {"mp3", "MP3 Audio"},
+        {"wav", "Waveform Audio"},
+        {"ogg", "Ogg Vorbis Audio"},
+        {"flac", "FLAC Audio"},
+        {"mp4", "MPEG-4 Video"},
+        {"avi", "AVI Video"},
+        {"mov", "QuickTime Movie"},
+        {"wmv", "Windows Media Video"},
+        {"mkv", "Matroska Video"},
+        {"zip", "ZIP Archive"},
+        {"rar", "RAR Archive"},
+        {"7z", "7-Zip Archive"},
+        {"tar", "TAR Archive"},
+        {"gz", "GZIP Archive"},
+        {"exe", "Windows Executable"},
+        {"dll", "Dynamic Link Library"},
+        {"bat", "Batch File"},
+        {"cmd", "Command Script"},
+        {"cpp", "C++ Source File"},
+        {"h", "C/C++ Header File"},
+        {"c", "C Source File"},
+        {"js", "JavaScript File"},
+        {"json", "JSON File"},
+        {"xml", "XML File"},
+        {"html", "HTML Document"},
+        {"htm", "HTML Document"},
+        {"css", "Cascading Style Sheet"},
+        {"py", "Python Script"},
+        {"java", "Java Source File"},
+        {"php", "PHP Script"},
+        {"rb", "Ruby Script"},
+        {"go", "Go Source File"},
+        {"sh", "Shell Script"},
+        {"md", "Markdown Document"},
+        {"ini", "Configuration File"},
+        {"log", "Log File"},
+        {"iso", "ISO Disk Image"},
+        {"apk", "Android Package"},
+        {"db", "Database File"},
+        {"sqlite", "SQLite Database"},
+        {"csv", "Comma-Separated Values"},
+        {"tsv", "Tab-Separated Values"},
+        {"yml", "YAML File"},
+        {"yaml", "YAML File"},
+        {"psd", "Photoshop Document"},
+        {"ai", "Adobe Illustrator File"},
+        {"eps", "Encapsulated PostScript"},
+        {"rtf", "Rich Text Format"},
+        {"odt", "OpenDocument Text"},
+        {"ods", "OpenDocument Spreadsheet"},
+        {"odp", "OpenDocument Presentation"},
+        {"apk", "Android Package"},
+        {"bat", "Batch File"},
+        {"com", "DOS Command File"},
+        {"msi", "Windows Installer Package"},
+        {"sys", "System File"},
+        {"tmp", "Temporary File"},
+        {"bak", "Backup File"},
+        {"torrent", "BitTorrent File"},
+        {"eml", "Email Message"},
+        {"msg", "Outlook Mail Message"},
+        {"ics", "iCalendar File"},
+        {"vcf", "vCard File"},
+        {"dat", "Data File"},
+        {"bin", "Binary File"},
+        {"apk", "Android Package"},
+        {"app", "Application Bundle"},
+        {"dmg", "Apple Disk Image"},
+        {"pkg", "Package File"},
+        {"deb", "Debian Package"},
+        {"rpm", "Red Hat Package"},
+        {"vbs", "VBScript File"},
+        {"wsf", "Windows Script File"},
+        {"asp", "Active Server Page"},
+        {"aspx", "Active Server Page Extended"},
+        {"jsp", "Java Server Page"},
+        {"cfm", "ColdFusion Markup"},
+        {"pl", "Perl Script"},
+        {"lua", "Lua Script"},
+        {"swift", "Swift Source File"},
+        {"kt", "Kotlin Source File"},
+        {"dart", "Dart Source File"},
+        {"scala", "Scala Source File"},
+        {"rs", "Rust Source File"},
+        {"m", "Objective-C Source File"},
+        {"mm", "Objective-C++ Source File"},
+        {"vb", "Visual Basic File"},
+        {"fs", "F# Source File"},
+        {"cs", "C# Source File"},
+        {"sln", "Visual Studio Solution"},
+        {"vcxproj", "Visual C++ Project"},
+        {"xcodeproj", "Xcode Project"},
+        {"pro", "Qt Project File"},
+        {"cmake", "CMake File"},
+        {"makefile", "Makefile"},
+        {"gradle", "Gradle Build File"},
+        {"pom", "Maven Project Object Model"},
+        {"lock", "Lock File"},
+        {"manifest", "Manifest File"},
+        {"resx", ".NET Resource File"},
+        {"dll", "Dynamic Link Library"},
+        {"lib", "Static Library"},
+        {"obj", "Object File"},
+        {"pdb", "Program Database"},
+        {"suo", "Solution User Options"},
+        {"user", "User Options File"},
+        {"nupkg", "NuGet Package"},
+        {"nuspec", "NuGet Specification"},
+        {"vsix", "Visual Studio Extension"},
+        {"xaml", "XAML File"},
+        {"ps1", "PowerShell Script"},
+        {"reg", "Registry File"},
+        {"scr", "Screensaver File"},
+        {"lnk", "Shortcut File"},
+        {"url", "Internet Shortcut"},
+        {"desktop", "Desktop Entry"},
+        {"cfg", "Configuration File"},
+        {"conf", "Configuration File"},
+        {"properties", "Properties File"},
+        {"env", "Environment File"},
+        {"rc", "Run Commands File"},
+        {"service", "Systemd Service File"},
+        {"plist", "Property List"},
+        {"dbf", "Database File"},
+        {"mdb", "Microsoft Access Database"},
+        {"accdb", "Microsoft Access Database"},
+        {"sql", "SQL File"},
+        {"bak", "Backup File"},
+        {"tmp", "Temporary File"},
+        {"swf", "Shockwave Flash Format"}
+    };
+    std::string lower_ext = ext;
+    for (auto& c : lower_ext) c = tolower(c);
+    auto it = type_map.find(lower_ext);
+    if (it != type_map.end()) return it->second;
+    return ext;
+}
+
 
 // If using a different backend (e.g., DirectX), adjust includes and init accordingly.
 
@@ -106,6 +268,54 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     std::string selected_item_fullpath;
 
     std::vector<std::string> dir_stack; // For going up
+
+    // Add a global variable for the preference
+    static bool pref_show_item_checkboxes = false;
+    static std::vector<std::string> checked_items; // store full paths
+    // Persisted selected section for preferences (moved out so we can load/save it)
+    static int selected_section = 0;
+
+    // Load preferences from config.json if available
+    {
+        nlohmann::json cfg;
+        // Default preferences
+        nlohmann::json default_cfg = {
+            {"show_item_checkboxes", false},
+            {"selected_section", 0}
+        };
+
+        bool loaded = read_json_file("config.json", cfg);
+        if (!loaded) {
+            // If reading failed (missing or invalid), create a new config file with defaults
+            cfg = default_cfg;
+            write_json_file("config.json", cfg);
+        }
+
+        // Merge loaded config with defaults to ensure all keys exist
+        // If a key is missing or of wrong type, set it to default and mark to persist
+        bool need_persist = false;
+        if (cfg.contains("show_item_checkboxes") && cfg["show_item_checkboxes"].is_boolean()) {
+            pref_show_item_checkboxes = cfg["show_item_checkboxes"].get<bool>();
+        } else {
+            cfg["show_item_checkboxes"] = default_cfg["show_item_checkboxes"];
+            need_persist = true;
+        }
+        if (cfg.contains("selected_section") && cfg["selected_section"].is_number_integer()) {
+            selected_section = cfg["selected_section"].get<int>();
+        } else {
+            cfg["selected_section"] = default_cfg["selected_section"];
+            need_persist = true;
+        }
+
+        if (need_persist) {
+            write_json_file("config.json", cfg);
+        }
+    }
+
+    // --- Folder size cache and async state for checkboxes ---
+    static std::unordered_map<std::string, ULONGLONG> checked_folder_size_cache;
+    static std::unordered_map<std::string, std::atomic<bool>> checked_folder_size_running;
+    static std::mutex checked_folder_size_mutex;
 
     // Main loop
     while (show_window && !glfwWindowShouldClose(window))
@@ -202,6 +412,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             // Click to select drive
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                 current_dir = drive_str;
+                checked_items.clear();
+                checked_folder_size_cache.clear();
+                checked_folder_size_running.clear();
             }
             if (drive_open) {
                 // Enumerate folders and files in this drive
@@ -223,6 +436,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                             // Click to select folder
                             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                                 current_dir = folder_path;
+                                checked_items.clear();
+                                checked_folder_size_cache.clear();
+                                checked_folder_size_running.clear();
                             }
                             if (folder_open) {
                                 // Enumerate subfolders and files (one level deep)
@@ -244,6 +460,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                                         if (ImGui::Selectable(sub_label.c_str(), current_dir == sub_path, sub_flags)) {
                                             if (sub_is_dir) {
                                                 current_dir = sub_path;
+                                                checked_items.clear();
+                                                checked_folder_size_cache.clear();
+                                                checked_folder_size_running.clear();
                                             }
                                         }
                                     } while (FindNextFileA(hSubFind, &sub_find));
@@ -274,6 +493,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 size_t pos = current_dir.find_last_of("\\/", current_dir.length() - 2);
                 if (pos != std::string::npos) {
                     current_dir = current_dir.substr(0, pos + 1);
+                    checked_items.clear();
+                    checked_folder_size_cache.clear();
+                    checked_folder_size_running.clear();
                 }
             }
         }
@@ -288,14 +510,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         static bool selected_item_is_dir = false;
         static std::string selected_item_fullpath;
         static ULONGLONG selected_file_size = 0;
-        static int selected_folder_subfolders = 0; // immediate subfolders (non-recursive)
-        static int selected_folder_files = 0;      // immediate files (non-recursive)
+        static int selected_folder_subfolders = 0;
+        static int selected_folder_files = 0;
         static ULONGLONG selected_folder_size = 0;
+        static ULONGLONG checked_total_size = 0;
+        int checked_count = 0;
+        checked_total_size = 0;
         ImGui::Columns(2, nullptr, true);
         ImGui::Text("Name"); ImGui::NextColumn();
         ImGui::Text("Type"); ImGui::NextColumn();
         ImGui::Separator();
-
         char search_path[MAX_PATH];
         wsprintfA(search_path, "%s*", current_dir.c_str());
         WIN32_FIND_DATAA find_data;
@@ -312,8 +536,40 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 std::string label = std::string(is_dir ? "[+] " : "[-] ") + item_name;
                 std::string full_path = current_dir + item_name + (is_dir ? "\\" : "");
                 bool is_selected = (selected_item_fullpath == full_path);
+                // --- Checkbox logic ---
+                bool checked = false;
+                if (pref_show_item_checkboxes) {
+                    auto it = std::find(checked_items.begin(), checked_items.end(), full_path);
+                    checked = (it != checked_items.end());
+                    ImGui::PushID(item_index);
+                    if (ImGui::Checkbox("", &checked)) {
+                        if (checked) {
+                            checked_items.push_back(full_path);
+                            // If it's a folder and not already being calculated, start async size calc
+                            if (is_dir && checked_folder_size_cache.find(full_path) == checked_folder_size_cache.end() && checked_folder_size_running.find(full_path) == checked_folder_size_running.end()) {
+                                checked_folder_size_running[full_path] = true;
+                                std::thread([full_path]() {
+                                    FolderStats stats;
+                                    GetFolderStatsRecursive(full_path, stats);
+                                    std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                                    checked_folder_size_cache[full_path] = stats.size;
+                                    checked_folder_size_running[full_path] = false;
+                                }).detach();
+                            }
+                        } else {
+                            checked_items.erase(std::remove(checked_items.begin(), checked_items.end(), full_path), checked_items.end());
+                            // Remove from cache and running
+                            std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                            checked_folder_size_cache.erase(full_path);
+                            checked_folder_size_running.erase(full_path);
+                        }
+                    }
+                    ImGui::PopID();
+                    ImGui::SameLine();
+                }
+                // --- End Checkbox logic ---
+                // --- Selectable with double-click folder open ---
                 if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
-                    // Single click: select item
                     selected_item_name = item_name;
                     selected_item_is_dir = is_dir;
                     selected_item_fullpath = full_path;
@@ -331,12 +587,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                             }
                             CloseHandle(hFile);
                         }
-                // Cancel any running folder stats thread
-                if (folder_stats_running) {
-                    folder_stats_cancel = true;
-                    if (folder_stats_thread.joinable()) folder_stats_thread.join();
-                    folder_stats_running = false;
-                }
+                        // Cancel any running folder stats thread
+                        if (folder_stats_running) {
+                            folder_stats_cancel = true;
+                            if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                            folder_stats_running = false;
+                        }
                     } else {
                         // Cancel any running folder stats thread
                         if (folder_stats_running) {
@@ -376,10 +632,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                         if (folder_stats_thread.joinable()) folder_stats_thread.detach();
                     }
                 }
-                // Double click: open folder
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && is_dir) {
+                // --- Double-click to open folder ---
+                if (is_dir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
                     current_dir = full_path;
                     selected_item_fullpath.clear();
+                    checked_items.clear();
+                    checked_folder_size_cache.clear();
+                    checked_folder_size_running.clear();
                     // Cancel any running folder stats thread
                     if (folder_stats_running) {
                         folder_stats_cancel = true;
@@ -387,13 +646,36 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                         folder_stats_running = false;
                     }
                 }
+                // --- End double-click logic ---
+                // --- Calculate checked size/count ---
+                if (pref_show_item_checkboxes && checked) {
+                    checked_count++;
+                    if (is_dir) {
+                        std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                        auto it = checked_folder_size_cache.find(full_path);
+                        if (it != checked_folder_size_cache.end()) {
+                            checked_total_size += it->second;
+                        }
+                    } else {
+                        HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                        if (hFile != INVALID_HANDLE_VALUE) {
+                            LARGE_INTEGER size;
+                            if (GetFileSizeEx(hFile, &size)) {
+                                checked_total_size += size.QuadPart;
+                            }
+                            CloseHandle(hFile);
+                        }
+                    }
+                }
+                // --- End checked size/count ---
                 ImGui::NextColumn();
                 if (is_dir) {
                     ImGui::TextUnformatted("folder");
                 } else {
                     const char* ext = strrchr(item_name.c_str(), '.');
                     if (ext && ext != item_name.c_str()) {
-                        ImGui::TextUnformatted(ext + 1);
+                        std::string ext_str = ext + 1;
+                        ImGui::TextUnformatted(GetFileTypeName(ext_str).c_str());
                     } else {
                         ImGui::TextUnformatted("file");
                     }
@@ -404,6 +686,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             FindClose(hFind);
         }
         ImGui::Columns(1);
+        // --- Show checked summary ---
+        // (Removed: do not show selected item count and size here)
+        // --- End checked summary ---
         ImGui::End();
 
         // Draw fixed status bar at the bottom
@@ -413,7 +698,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         ImGuiWindowFlags statusbar_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
         ImGui::Begin("##statusbar", nullptr, statusbar_flags);
-        if (!selected_item_fullpath.empty()) {
+        if (pref_show_item_checkboxes && checked_count > 0) {
+            char checked_info[256];
+            double size = (double)checked_total_size;
+            int calculating = 0;
+            for (const auto& path : checked_items) {
+                if (checked_folder_size_running.count(path) && checked_folder_size_running[path]) calculating++;
+            }
+            if (size < 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %llu bytes%s", checked_count, checked_total_size, calculating ? " (Calculating...)" : "");
+            } else if (size < 1024 * 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f KB%s", checked_count, size / 1024.0, calculating ? " (Calculating...)" : "");
+            } else if (size < 1024 * 1024 * 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f MB%s", checked_count, size / (1024.0 * 1024.0), calculating ? " (Calculating...)" : "");
+            } else {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f GB%s", checked_count, size / (1024.0 * 1024.0 * 1024.0), calculating ? " (Calculating...)" : "");
+            }
+            ImGui::Text("%s", checked_info);
+        } else if (!selected_item_fullpath.empty()) {
             if (selected_item_is_dir) {
                 if (folder_stats_running && folder_stats_path == selected_item_fullpath) {
                     ImGui::Text("Folder: %s | Subfolders: %d | Files: %d | Size: Calculating...", selected_item_name.c_str(), selected_folder_subfolders, selected_folder_files);
@@ -458,11 +760,64 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
         // Preferences window
         if (show_preferences) {
-            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Preferences", &show_preferences, ImGuiWindowFlags_NoCollapse)) {
-                ImGui::Text("Preferences");
-                ImGui::Separator();
-                ImGui::Text("(Add your preferences UI here)");
+                static const char* sections[] = { "Show", "General", "Appearance", "Shortcuts" };
+                ImGui::BeginChild("##prefs_sidebar", ImVec2(150, 0), true, ImGuiWindowFlags_NoMove);
+                for (int i = 0; i < IM_ARRAYSIZE(sections); ++i) {
+                    if (ImGui::Selectable(sections[i], selected_section == i)) {
+                        selected_section = i;
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::SameLine();
+                ImGui::BeginChild("##prefs_mainpanel", ImVec2(0, -50), false, ImGuiWindowFlags_NoMove);
+                if (selected_section == 0) {
+                    ImGui::Text("Show Settings");
+                    ImGui::Separator();
+                    ImGui::Checkbox("Item Checkboxes", &pref_show_item_checkboxes);
+                } else if (selected_section == 1) {
+                    ImGui::Text("General Settings");
+                    ImGui::Separator();
+                    ImGui::Text("(Add general settings here)");
+                } else if (selected_section == 2) {
+                    ImGui::Text("Appearance Settings");
+                    ImGui::Separator();
+                    ImGui::Text("(Add appearance settings here)");
+                } else if (selected_section == 3) {
+                    ImGui::Text("Shortcuts");
+                    ImGui::Separator();
+                    ImGui::Text("(Add shortcut settings here)");
+                }
+                ImGui::EndChild();
+                // --- BUTTONS AT BOTTOM RIGHT ---
+                float button_width = 80.0f;
+                float spacing = 10.0f;
+                ImVec2 button_size(button_width, 0);
+                float window_w = ImGui::GetWindowWidth();
+                float button_area_w = button_width * 2 + spacing;
+                ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 40);
+                ImGui::SetCursorPosX(window_w - button_area_w - ImGui::GetStyle().WindowPadding.x);
+                if (ImGui::Button("OK", button_size)) {
+                    ImGui::SaveIniSettingsToDisk("imgui.ini");
+                    // Save preferences to config.json
+                    nlohmann::json cfg;
+                    cfg["show_item_checkboxes"] = pref_show_item_checkboxes;
+                    cfg["selected_section"] = selected_section;
+                    // write to disk (returns true on success)
+                    if (!write_json_file("config.json", cfg)) {
+                        // Could log an error or show notification - omitted for brevity
+                    }
+                    show_preferences = false;
+                }
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::Button("Cancel", button_size)) {
+                    show_preferences = false;
+                }
+                ImGui::PopStyleColor(2);
+                // --- END BUTTONS ---
             }
             ImGui::End();
         }
