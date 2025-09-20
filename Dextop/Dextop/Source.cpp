@@ -11,6 +11,7 @@
 #include <thread>
 #include <unordered_map>
 #include <mutex>
+#include <map>
 
 // Helper struct for folder stats
 struct FolderStats {
@@ -45,6 +46,164 @@ void GetFolderStatsRecursive(const std::string& folder, FolderStats& stats, std:
         FindClose(hFind);
     }
 }
+
+// --- File type mapping function ---
+std::string GetFileTypeName(const std::string& ext) {
+    static const std::map<std::string, std::string> type_map = {
+        {"pdf", "Portable Document Format"},
+        {"swf", "Shockwave Flash Format"},
+        {"txt", "Text Document"},
+        {"doc", "Microsoft Word Document"},
+        {"docx", "Microsoft Word Document"},
+        {"xls", "Microsoft Excel Spreadsheet"},
+        {"xlsx", "Microsoft Excel Spreadsheet"},
+        {"ppt", "Microsoft PowerPoint Presentation"},
+        {"pptx", "Microsoft PowerPoint Presentation"},
+        {"jpg", "JPEG Image"},
+        {"jpeg", "JPEG Image"},
+        {"png", "Portable Network Graphics"},
+        {"gif", "Graphics Interchange Format"},
+        {"bmp", "Bitmap Image"},
+        {"tiff", "Tagged Image File Format"},
+        {"svg", "Scalable Vector Graphics"},
+        {"mp3", "MP3 Audio"},
+        {"wav", "Waveform Audio"},
+        {"ogg", "Ogg Vorbis Audio"},
+        {"flac", "FLAC Audio"},
+        {"mp4", "MPEG-4 Video"},
+        {"avi", "AVI Video"},
+        {"mov", "QuickTime Movie"},
+        {"wmv", "Windows Media Video"},
+        {"mkv", "Matroska Video"},
+        {"zip", "ZIP Archive"},
+        {"rar", "RAR Archive"},
+        {"7z", "7-Zip Archive"},
+        {"tar", "TAR Archive"},
+        {"gz", "GZIP Archive"},
+        {"exe", "Windows Executable"},
+        {"dll", "Dynamic Link Library"},
+        {"bat", "Batch File"},
+        {"cmd", "Command Script"},
+        {"cpp", "C++ Source File"},
+        {"h", "C/C++ Header File"},
+        {"c", "C Source File"},
+        {"js", "JavaScript File"},
+        {"json", "JSON File"},
+        {"xml", "XML File"},
+        {"html", "HTML Document"},
+        {"htm", "HTML Document"},
+        {"css", "Cascading Style Sheet"},
+        {"py", "Python Script"},
+        {"java", "Java Source File"},
+        {"php", "PHP Script"},
+        {"rb", "Ruby Script"},
+        {"go", "Go Source File"},
+        {"sh", "Shell Script"},
+        {"md", "Markdown Document"},
+        {"ini", "Configuration File"},
+        {"log", "Log File"},
+        {"iso", "ISO Disk Image"},
+        {"apk", "Android Package"},
+        {"db", "Database File"},
+        {"sqlite", "SQLite Database"},
+        {"csv", "Comma-Separated Values"},
+        {"tsv", "Tab-Separated Values"},
+        {"yml", "YAML File"},
+        {"yaml", "YAML File"},
+        {"psd", "Photoshop Document"},
+        {"ai", "Adobe Illustrator File"},
+        {"eps", "Encapsulated PostScript"},
+        {"rtf", "Rich Text Format"},
+        {"odt", "OpenDocument Text"},
+        {"ods", "OpenDocument Spreadsheet"},
+        {"odp", "OpenDocument Presentation"},
+        {"apk", "Android Package"},
+        {"bat", "Batch File"},
+        {"com", "DOS Command File"},
+        {"msi", "Windows Installer Package"},
+        {"sys", "System File"},
+        {"tmp", "Temporary File"},
+        {"bak", "Backup File"},
+        {"torrent", "BitTorrent File"},
+        {"eml", "Email Message"},
+        {"msg", "Outlook Mail Message"},
+        {"ics", "iCalendar File"},
+        {"vcf", "vCard File"},
+        {"dat", "Data File"},
+        {"bin", "Binary File"},
+        {"apk", "Android Package"},
+        {"app", "Application Bundle"},
+        {"dmg", "Apple Disk Image"},
+        {"pkg", "Package File"},
+        {"deb", "Debian Package"},
+        {"rpm", "Red Hat Package"},
+        {"vbs", "VBScript File"},
+        {"wsf", "Windows Script File"},
+        {"asp", "Active Server Page"},
+        {"aspx", "Active Server Page Extended"},
+        {"jsp", "Java Server Page"},
+        {"cfm", "ColdFusion Markup"},
+        {"pl", "Perl Script"},
+        {"lua", "Lua Script"},
+        {"swift", "Swift Source File"},
+        {"kt", "Kotlin Source File"},
+        {"dart", "Dart Source File"},
+        {"scala", "Scala Source File"},
+        {"rs", "Rust Source File"},
+        {"m", "Objective-C Source File"},
+        {"mm", "Objective-C++ Source File"},
+        {"vb", "Visual Basic File"},
+        {"fs", "F# Source File"},
+        {"cs", "C# Source File"},
+        {"sln", "Visual Studio Solution"},
+        {"vcxproj", "Visual C++ Project"},
+        {"xcodeproj", "Xcode Project"},
+        {"pro", "Qt Project File"},
+        {"cmake", "CMake File"},
+        {"makefile", "Makefile"},
+        {"gradle", "Gradle Build File"},
+        {"pom", "Maven Project Object Model"},
+        {"lock", "Lock File"},
+        {"manifest", "Manifest File"},
+        {"resx", ".NET Resource File"},
+        {"dll", "Dynamic Link Library"},
+        {"lib", "Static Library"},
+        {"obj", "Object File"},
+        {"pdb", "Program Database"},
+        {"suo", "Solution User Options"},
+        {"user", "User Options File"},
+        {"nupkg", "NuGet Package"},
+        {"nuspec", "NuGet Specification"},
+        {"vsix", "Visual Studio Extension"},
+        {"xaml", "XAML File"},
+        {"ps1", "PowerShell Script"},
+        {"reg", "Registry File"},
+        {"scr", "Screensaver File"},
+        {"lnk", "Shortcut File"},
+        {"url", "Internet Shortcut"},
+        {"desktop", "Desktop Entry"},
+        {"cfg", "Configuration File"},
+        {"conf", "Configuration File"},
+        {"properties", "Properties File"},
+        {"env", "Environment File"},
+        {"rc", "Run Commands File"},
+        {"service", "Systemd Service File"},
+        {"plist", "Property List"},
+        {"dbf", "Database File"},
+        {"mdb", "Microsoft Access Database"},
+        {"accdb", "Microsoft Access Database"},
+        {"sql", "SQL File"},
+        {"bak", "Backup File"},
+        {"tmp", "Temporary File"},
+        {"swf", "Shockwave Flash Format"}
+    };
+    std::string lower_ext = ext;
+    for (auto& c : lower_ext) c = tolower(c);
+    auto it = type_map.find(lower_ext);
+    if (it != type_map.end()) return it->second;
+    return ext;
+}
+
 
 // If using a different backend (e.g., DirectX), adjust includes and init accordingly.
 
@@ -474,7 +633,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 } else {
                     const char* ext = strrchr(item_name.c_str(), '.');
                     if (ext && ext != item_name.c_str()) {
-                        ImGui::TextUnformatted(ext + 1);
+                        std::string ext_str = ext + 1;
+                        ImGui::TextUnformatted(GetFileTypeName(ext_str).c_str());
                     } else {
                         ImGui::TextUnformatted("file");
                     }
