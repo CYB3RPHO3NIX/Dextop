@@ -1,4 +1,5 @@
 {
     "selected_section": 0,
-    "show_item_checkboxes": true
+    "show_item_checkboxes": false,
+    "show_side_panel": true
 }

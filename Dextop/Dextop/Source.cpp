@@ -261,7 +261,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     static FolderStats folder_stats_result;
 
     // Track current directory for central window
-    std::string current_dir = "C:\\"; // Start at C:\
+    std::string current_dir = ""; // Start with no selection so UI shows all drives
     std::string selected_side_path = current_dir; // For side panel selection sync
     std::string selected_item_name; // For main panel selection
     bool selected_item_is_dir = false;
@@ -271,6 +271,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
     // Add a global variable for the preference
     static bool pref_show_item_checkboxes = false;
+    static bool pref_show_side_panel = true;
     static std::vector<std::string> checked_items; // store full paths
     // Persisted selected section for preferences (moved out so we can load/save it)
     static int selected_section = 0;
@@ -281,7 +282,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         // Default preferences
         nlohmann::json default_cfg = {
             {"show_item_checkboxes", false},
-            {"selected_section", 0}
+            {"selected_section", 0},
+            {"show_side_panel", true}
         };
 
         bool loaded = read_json_file("config.json", cfg);
@@ -304,6 +306,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             selected_section = cfg["selected_section"].get<int>();
         } else {
             cfg["selected_section"] = default_cfg["selected_section"];
+            need_persist = true;
+        }
+        if (cfg.contains("show_side_panel") && cfg["show_side_panel"].is_boolean()) {
+            pref_show_side_panel = cfg["show_side_panel"].get<bool>();
+        } else {
+            cfg["show_side_panel"] = default_cfg["show_side_panel"];
             need_persist = true;
         }
 
@@ -341,7 +349,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         float sidebar_top = menubar_pos.y + menubar_size.y;
         float sidebar_height = viewport->Size.y - menubar_size.y - statusbar_size.y;
         ImVec2 sidebar_pos = ImVec2(viewport->Pos.x, sidebar_top);
-        ImVec2 sidebar_size = ImVec2(sidebar_width, sidebar_height);
+        // Hide sidebar when preference disabled
+        float effective_sidebar_width = pref_show_side_panel ? sidebar_width : 0.0f;
+        ImVec2 sidebar_size = ImVec2(effective_sidebar_width, sidebar_height);
         float center_left = sidebar_pos.x + sidebar_size.x;
         float center_top = menubar_pos.y + menubar_size.y;
         float center_width = viewport->Size.x - sidebar_size.x;
@@ -394,102 +404,112 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         }
         ImGui::End();
 
-        // Draw fixed Directory Tree window on the left
-        ImGui::SetNextWindowPos(sidebar_pos);
-        ImGui::SetNextWindowSize(sidebar_size);
-        ImGuiWindowFlags sidebar_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
-        ImGui::Begin("Directory Tree", nullptr, sidebar_flags);
+        // Draw fixed Directory Tree window on the left (optional)
+        if (pref_show_side_panel) {
+            ImGui::SetNextWindowPos(sidebar_pos);
+            ImGui::SetNextWindowSize(sidebar_size);
+            ImGuiWindowFlags sidebar_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+            ImGui::Begin("Directory Tree", nullptr, sidebar_flags);
 
-        // Enumerate drives
-        char drives[256];
-        DWORD drive_count = GetLogicalDriveStringsA(sizeof(drives), drives);
-        for (char* drive = drives; *drive; drive += strlen(drive) + 1) {
-            std::string drive_str = drive;
-            bool drive_selected = (current_dir == drive_str);
-            ImGuiTreeNodeFlags drive_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
-            if (drive_selected) drive_flags |= ImGuiTreeNodeFlags_Selected;
-            bool drive_open = ImGui::TreeNodeEx(drive, drive_flags);
-            // Click to select drive
-            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-                current_dir = drive_str;
-                checked_items.clear();
-                checked_folder_size_cache.clear();
-                checked_folder_size_running.clear();
-            }
-            if (drive_open) {
-                // Enumerate folders and files in this drive
-                char search_path[MAX_PATH];
-                wsprintfA(search_path, "%s*", drive);
-                WIN32_FIND_DATAA find_data;
-                HANDLE hFind = FindFirstFileA(search_path, &find_data);
-                if (hFind != INVALID_HANDLE_VALUE) {
-                    do {
-                        if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
-                            continue;
-                        bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-                        std::string folder_path = drive_str + std::string(find_data.cFileName) + "\\";
-                        std::string label = std::string(is_dir ? "[+] " : "[-] ") + find_data.cFileName;
-                        if (is_dir) {
-                            ImGuiTreeNodeFlags folder_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
-                            if (current_dir == folder_path) folder_flags |= ImGuiTreeNodeFlags_Selected;
-                            bool folder_open = ImGui::TreeNodeEx(label.c_str(), folder_flags);
-                            // Click to select folder
-                            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-                                current_dir = folder_path;
-                                checked_items.clear();
-                                checked_folder_size_cache.clear();
-                                checked_folder_size_running.clear();
-                            }
-                            if (folder_open) {
-                                // Enumerate subfolders and files (one level deep)
-                                char subfolder_path[MAX_PATH];
-                                wsprintfA(subfolder_path, "%s%s\\", drive, find_data.cFileName);
-                                char sub_search[MAX_PATH];
-                                wsprintfA(sub_search, "%s*", subfolder_path);
-                                WIN32_FIND_DATAA sub_find;
-                                HANDLE hSubFind = FindFirstFileA(sub_search, &sub_find);
-                                if (hSubFind != INVALID_HANDLE_VALUE) {
-                                    do {
-                                        if (strcmp(sub_find.cFileName, ".") == 0 || strcmp(sub_find.cFileName, "..") == 0)
-                                            continue;
-                                        bool sub_is_dir = (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-                                        std::string sub_label = std::string(sub_is_dir ? "[+] " : "[-] ") + sub_find.cFileName;
-                                        std::string sub_path = folder_path + sub_find.cFileName + "\\";
-                                        ImGuiTreeNodeFlags sub_flags = 0;
-                                        if (current_dir == sub_path) sub_flags |= ImGuiTreeNodeFlags_Selected;
-                                        if (ImGui::Selectable(sub_label.c_str(), current_dir == sub_path, sub_flags)) {
-                                            if (sub_is_dir) {
-                                                current_dir = sub_path;
-                                                checked_items.clear();
-                                                checked_folder_size_cache.clear();
-                                                checked_folder_size_running.clear();
-                                            }
-                                        }
-                                    } while (FindNextFileA(hSubFind, &sub_find));
-                                    FindClose(hSubFind);
-                                }
-                                ImGui::TreePop();
-                            }
-                        } else {
-                            ImGui::BulletText("%s", label.c_str());
-                        }
-                    } while (FindNextFileA(hFind, &find_data));
-                    FindClose(hFind);
+            // Enumerate drives
+            char drives[256];
+            DWORD drive_count = GetLogicalDriveStringsA(sizeof(drives), drives);
+            for (char* drive = drives; *drive; drive += strlen(drive) + 1) {
+                std::string drive_str = drive;
+                bool drive_selected = (current_dir == drive_str);
+                ImGuiTreeNodeFlags drive_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+                if (drive_selected) drive_flags |= ImGuiTreeNodeFlags_Selected;
+                bool drive_open = ImGui::TreeNodeEx(drive, drive_flags);
+                // Click to select drive
+                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                    current_dir = drive_str;
+                    checked_items.clear();
+                    checked_folder_size_cache.clear();
+                    checked_folder_size_running.clear();
                 }
-                ImGui::TreePop();
+                if (drive_open) {
+                    // Enumerate folders and files in this drive
+                    char search_path[MAX_PATH];
+                    wsprintfA(search_path, "%s*", drive);
+                    WIN32_FIND_DATAA find_data;
+                    HANDLE hFind = FindFirstFileA(search_path, &find_data);
+                    if (hFind != INVALID_HANDLE_VALUE) {
+                        do {
+                            if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
+                                continue;
+                            bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                            std::string folder_path = drive_str + std::string(find_data.cFileName) + "\\";
+                            std::string label = std::string(is_dir ? "[+] " : "[-] ") + find_data.cFileName;
+                            if (is_dir) {
+                                ImGuiTreeNodeFlags folder_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+                                if (current_dir == folder_path) folder_flags |= ImGuiTreeNodeFlags_Selected;
+                                bool folder_open = ImGui::TreeNodeEx(label.c_str(), folder_flags);
+                                // Click to select folder
+                                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                                    current_dir = folder_path;
+                                    checked_items.clear();
+                                    checked_folder_size_cache.clear();
+                                    checked_folder_size_running.clear();
+                                }
+                                if (folder_open) {
+                                    // Enumerate subfolders and files (one level deep)
+                                    char subfolder_path[MAX_PATH];
+                                    wsprintfA(subfolder_path, "%s%s\\", drive, find_data.cFileName);
+                                    char sub_search[MAX_PATH];
+                                    wsprintfA(sub_search, "%s*", subfolder_path);
+                                    WIN32_FIND_DATAA sub_find;
+                                    HANDLE hSubFind = FindFirstFileA(sub_search, &sub_find);
+                                    if (hSubFind != INVALID_HANDLE_VALUE) {
+                                        do {
+                                            if (strcmp(sub_find.cFileName, ".") == 0 || strcmp(sub_find.cFileName, "..") == 0)
+                                                continue;
+                                            bool sub_is_dir = (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                                            std::string sub_label = std::string(sub_is_dir ? "[+] " : "[-] ") + sub_find.cFileName;
+                                            std::string sub_path = folder_path + sub_find.cFileName + "\\";
+                                            ImGuiTreeNodeFlags sub_flags = 0;
+                                            if (current_dir == sub_path) sub_flags |= ImGuiTreeNodeFlags_Selected;
+                                            if (ImGui::Selectable(sub_label.c_str(), current_dir == sub_path, sub_flags)) {
+                                                if (sub_is_dir) {
+                                                    current_dir = sub_path;
+                                                    checked_items.clear();
+                                                    checked_folder_size_cache.clear();
+                                                    checked_folder_size_running.clear();
+                                                }
+                                            }
+                                        } while (FindNextFileA(hSubFind, &sub_find));
+                                        FindClose(hSubFind);
+                                    }
+                                    ImGui::TreePop();
+                                }
+                            } else {
+                                ImGui::BulletText("%s", label.c_str());
+                            }
+                        } while (FindNextFileA(hFind, &find_data));
+                        FindClose(hFind);
+                    }
+                    ImGui::TreePop();
+                }
             }
-        }
 
-        ImGui::End();
+            ImGui::End();
+        }
 
         // Draw fixed central window
         ImGui::SetNextWindowPos(center_pos);
         ImGui::SetNextWindowSize(center_size);
         ImGuiWindowFlags center_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
         ImGui::Begin("Central Window", nullptr, center_flags);
-        // Always show Back button, only navigate if not at root
+        // Back button: when at drive root or empty, goes back to drive listing
         if (ImGui::Button("Back")) {
-            if (current_dir != "C:\\") {
+            if (current_dir.empty()) {
+                // already at drives listing; nothing to do
+            } else if (current_dir.size() == 3 && current_dir[1] == ':' && (current_dir[2] == '\\' || current_dir[2] == '/')) {
+                // drive root -> go back to drives listing
+                current_dir.clear();
+                checked_items.clear();
+                checked_folder_size_cache.clear();
+                checked_folder_size_running.clear();
+            } else {
                 size_t pos = current_dir.find_last_of("\\/", current_dir.length() - 2);
                 if (pos != std::string::npos) {
                     current_dir = current_dir.substr(0, pos + 1);
@@ -500,10 +520,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             }
         }
         ImGui::SameLine();
-        ImGui::Text("Current Directory: %s", current_dir.c_str());
+        if (current_dir.empty()) {
+            ImGui::Text("Drives");
+        } else {
+            ImGui::Text("Current Directory: %s", current_dir.c_str());
+        }
         ImGui::Separator();
 
-        // List folders and files with type column
+        // List folders and files with type column (or show drives when no current_dir)
         int folder_count = 0;
         int file_count = 0;
         static std::string selected_item_name;
@@ -516,174 +540,199 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         static ULONGLONG checked_total_size = 0;
         int checked_count = 0;
         checked_total_size = 0;
-        ImGui::Columns(2, nullptr, true);
-        ImGui::Text("Name"); ImGui::NextColumn();
-        ImGui::Text("Type"); ImGui::NextColumn();
-        ImGui::Separator();
-        char search_path[MAX_PATH];
-        wsprintfA(search_path, "%s*", current_dir.c_str());
-        WIN32_FIND_DATAA find_data;
-        HANDLE hFind = FindFirstFileA(search_path, &find_data);
-        int item_index = 0;
-        int selected_index = -1;
-        if (hFind != INVALID_HANDLE_VALUE) {
-            do {
-                if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
-                    continue;
-                bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-                if (is_dir) folder_count++; else file_count++;
-                std::string item_name = find_data.cFileName;
-                std::string label = std::string(is_dir ? "[+] " : "[-] ") + item_name;
-                std::string full_path = current_dir + item_name + (is_dir ? "\\" : "");
-                bool is_selected = (selected_item_fullpath == full_path);
-                // --- Checkbox logic ---
-                bool checked = false;
-                if (pref_show_item_checkboxes) {
-                    auto it = std::find(checked_items.begin(), checked_items.end(), full_path);
-                    checked = (it != checked_items.end());
-                    ImGui::PushID(item_index);
-                    if (ImGui::Checkbox("", &checked)) {
-                        if (checked) {
-                            checked_items.push_back(full_path);
-                            // If it's a folder and not already being calculated, start async size calc
-                            if (is_dir && checked_folder_size_cache.find(full_path) == checked_folder_size_cache.end() && checked_folder_size_running.find(full_path) == checked_folder_size_running.end()) {
-                                checked_folder_size_running[full_path] = true;
-                                std::thread([full_path]() {
-                                    FolderStats stats;
-                                    GetFolderStatsRecursive(full_path, stats);
-                                    std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
-                                    checked_folder_size_cache[full_path] = stats.size;
-                                    checked_folder_size_running[full_path] = false;
-                                }).detach();
-                            }
-                        } else {
-                            checked_items.erase(std::remove(checked_items.begin(), checked_items.end(), full_path), checked_items.end());
-                            // Remove from cache and running
-                            std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
-                            checked_folder_size_cache.erase(full_path);
-                            checked_folder_size_running.erase(full_path);
-                        }
-                    }
-                    ImGui::PopID();
-                    ImGui::SameLine();
-                }
-                // --- End Checkbox logic ---
-                // --- Selectable with double-click folder open ---
-                if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
-                    selected_item_name = item_name;
-                    selected_item_is_dir = is_dir;
-                    selected_item_fullpath = full_path;
-                    selected_file_size = 0;
-                    selected_folder_subfolders = 0;
-                    selected_folder_files = 0;
-                    selected_folder_size = 0;
-                    if (!is_dir) {
-                        // Get file size
-                        HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-                        if (hFile != INVALID_HANDLE_VALUE) {
-                            LARGE_INTEGER size;
-                            if (GetFileSizeEx(hFile, &size)) {
-                                selected_file_size = size.QuadPart;
-                            }
-                            CloseHandle(hFile);
-                        }
-                        // Cancel any running folder stats thread
-                        if (folder_stats_running) {
-                            folder_stats_cancel = true;
-                            if (folder_stats_thread.joinable()) folder_stats_thread.join();
-                            folder_stats_running = false;
-                        }
-                    } else {
-                        // Cancel any running folder stats thread
-                        if (folder_stats_running) {
-                            folder_stats_cancel = true;
-                            if (folder_stats_thread.joinable()) folder_stats_thread.join();
-                            folder_stats_running = false;
-                        }
-                        // Count immediate subfolders and files (non-recursive)
-                        char sub_search[MAX_PATH];
-                        wsprintfA(sub_search, "%s*", full_path.c_str());
-                        WIN32_FIND_DATAA sub_find;
-                        HANDLE hSubFind = FindFirstFileA(sub_search, &sub_find);
-                        if (hSubFind != INVALID_HANDLE_VALUE) {
-                            do {
-                                if (strcmp(sub_find.cFileName, ".") == 0 || strcmp(sub_find.cFileName, "..") == 0)
-                                    continue;
-                                if (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                                    selected_folder_subfolders++;
-                                else
-                                    selected_folder_files++;
-                            } while (FindNextFileA(hSubFind, &sub_find));
-                            FindClose(hSubFind);
-                        }
-                        // Start async folder stats computation (recursive size and file count)
-                        folder_stats_path = full_path;
-                        folder_stats_result = FolderStats();
-                        folder_stats_cancel = false;
-                        folder_stats_running = true;
-                        folder_stats_thread = std::thread([full_path]() {
-                            FolderStats stats;
-                            GetFolderStatsRecursive(full_path, stats, &folder_stats_cancel);
-                            if (!folder_stats_cancel) {
-                                folder_stats_result = stats;
-                            }
-                            folder_stats_running = false;
-                        });
-                        if (folder_stats_thread.joinable()) folder_stats_thread.detach();
-                    }
-                }
-                // --- Double-click to open folder ---
-                if (is_dir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                    current_dir = full_path;
-                    selected_item_fullpath.clear();
+        if (current_dir.empty()) {
+            // Show drives listing in central panel when no current_dir
+            ImGui::Columns(2, nullptr, true);
+            ImGui::Text("Name"); ImGui::NextColumn();
+            ImGui::Text("Type"); ImGui::NextColumn();
+            ImGui::Separator();
+            char drives[256];
+            DWORD drive_count = GetLogicalDriveStringsA(sizeof(drives), drives);
+            int drive_index = 0;
+            for (char* drive = drives; *drive; drive += strlen(drive) + 1) {
+                std::string drive_str = drive;
+                if (ImGui::Selectable(drive_str.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                    current_dir = drive_str;
                     checked_items.clear();
                     checked_folder_size_cache.clear();
                     checked_folder_size_running.clear();
-                    // Cancel any running folder stats thread
-                    if (folder_stats_running) {
-                        folder_stats_cancel = true;
-                        if (folder_stats_thread.joinable()) folder_stats_thread.join();
-                        folder_stats_running = false;
-                    }
                 }
-                // --- End double-click logic ---
-                // --- Calculate checked size/count ---
-                if (pref_show_item_checkboxes && checked) {
-                    checked_count++;
-                    if (is_dir) {
-                        std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
-                        auto it = checked_folder_size_cache.find(full_path);
-                        if (it != checked_folder_size_cache.end()) {
-                            checked_total_size += it->second;
-                        }
-                    } else {
-                        HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-                        if (hFile != INVALID_HANDLE_VALUE) {
-                            LARGE_INTEGER size;
-                            if (GetFileSizeEx(hFile, &size)) {
-                                checked_total_size += size.QuadPart;
+                ImGui::NextColumn();
+                ImGui::TextUnformatted("drive");
+                ImGui::NextColumn();
+                drive_index++;
+            }
+            ImGui::Columns(1);
+        } else {
+            ImGui::Columns(2, nullptr, true);
+            ImGui::Text("Name"); ImGui::NextColumn();
+            ImGui::Text("Type"); ImGui::NextColumn();
+            ImGui::Separator();
+            char search_path[MAX_PATH];
+            wsprintfA(search_path, "%s*", current_dir.c_str());
+            WIN32_FIND_DATAA find_data;
+            HANDLE hFind = FindFirstFileA(search_path, &find_data);
+            int item_index = 0;
+            int selected_index = -1;
+            if (hFind != INVALID_HANDLE_VALUE) {
+                do {
+                    if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
+                        continue;
+                    bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                    if (is_dir) folder_count++; else file_count++;
+                    std::string item_name = find_data.cFileName;
+                    std::string label = std::string(is_dir ? "[+] " : "[-] ") + item_name;
+                    std::string full_path = current_dir + item_name + (is_dir ? "\\" : "");
+                    bool is_selected = (selected_item_fullpath == full_path);
+                    // --- Checkbox logic ---
+                    bool checked = false;
+                    if (pref_show_item_checkboxes) {
+                        auto it = std::find(checked_items.begin(), checked_items.end(), full_path);
+                        checked = (it != checked_items.end());
+                        ImGui::PushID(item_index);
+                        if (ImGui::Checkbox("", &checked)) {
+                            if (checked) {
+                                checked_items.push_back(full_path);
+                                // If it's a folder and not already being calculated, start async size calc
+                                if (is_dir && checked_folder_size_cache.find(full_path) == checked_folder_size_cache.end() && checked_folder_size_running.find(full_path) == checked_folder_size_running.end()) {
+                                    checked_folder_size_running[full_path] = true;
+                                    std::thread([full_path]() {
+                                        FolderStats stats;
+                                        GetFolderStatsRecursive(full_path, stats);
+                                        std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                                        checked_folder_size_cache[full_path] = stats.size;
+                                        checked_folder_size_running[full_path] = false;
+                                    }).detach();
+                                }
+                            } else {
+                                checked_items.erase(std::remove(checked_items.begin(), checked_items.end(), full_path), checked_items.end());
+                                // Remove from cache and running
+                                std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                                checked_folder_size_cache.erase(full_path);
+                                checked_folder_size_running.erase(full_path);
                             }
-                            CloseHandle(hFile);
+                        }
+                        ImGui::PopID();
+                        ImGui::SameLine();
+                    }
+                    // --- End Checkbox logic ---
+                    // --- Selectable with double-click folder open ---
+                    if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
+                        selected_item_name = item_name;
+                        selected_item_is_dir = is_dir;
+                        selected_item_fullpath = full_path;
+                        selected_file_size = 0;
+                        selected_folder_subfolders = 0;
+                        selected_folder_files = 0;
+                        selected_folder_size = 0;
+                        if (!is_dir) {
+                            // Get file size
+                            HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                            if (hFile != INVALID_HANDLE_VALUE) {
+                                LARGE_INTEGER size;
+                                if (GetFileSizeEx(hFile, &size)) {
+                                    selected_file_size = size.QuadPart;
+                                }
+                                CloseHandle(hFile);
+                            }
+                            // Cancel any running folder stats thread
+                            if (folder_stats_running) {
+                                folder_stats_cancel = true;
+                                if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                                folder_stats_running = false;
+                            }
+                        } else {
+                            // Cancel any running folder stats thread
+                            if (folder_stats_running) {
+                                folder_stats_cancel = true;
+                                if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                                folder_stats_running = false;
+                            }
+                            // Count immediate subfolders and files (non-recursive)
+                            char sub_search[MAX_PATH];
+                            wsprintfA(sub_search, "%s*", full_path.c_str());
+                            WIN32_FIND_DATAA sub_find;
+                            HANDLE hSubFind = FindFirstFileA(sub_search, &sub_find);
+                            if (hSubFind != INVALID_HANDLE_VALUE) {
+                                do {
+                                    if (strcmp(sub_find.cFileName, ".") == 0 || strcmp(sub_find.cFileName, "..") == 0)
+                                        continue;
+                                    if (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                                        selected_folder_subfolders++;
+                                    else
+                                        selected_folder_files++;
+                                } while (FindNextFileA(hSubFind, &sub_find));
+                                FindClose(hSubFind);
+                            }
+                            // Start async folder stats computation (recursive size and file count)
+                            folder_stats_path = full_path;
+                            folder_stats_result = FolderStats();
+                            folder_stats_cancel = false;
+                            folder_stats_running = true;
+                            folder_stats_thread = std::thread([full_path]() {
+                                FolderStats stats;
+                                GetFolderStatsRecursive(full_path, stats, &folder_stats_cancel);
+                                if (!folder_stats_cancel) {
+                                    folder_stats_result = stats;
+                                }
+                                folder_stats_running = false;
+                            });
+                            if (folder_stats_thread.joinable()) folder_stats_thread.detach();
                         }
                     }
-                }
-                // --- End checked size/count ---
-                ImGui::NextColumn();
-                if (is_dir) {
-                    ImGui::TextUnformatted("folder");
-                } else {
-                    const char* ext = strrchr(item_name.c_str(), '.');
-                    if (ext && ext != item_name.c_str()) {
-                        std::string ext_str = ext + 1;
-                        ImGui::TextUnformatted(GetFileTypeName(ext_str).c_str());
-                    } else {
-                        ImGui::TextUnformatted("file");
+                    // --- Double-click to open folder ---
+                    if (is_dir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                        current_dir = full_path;
+                        selected_item_fullpath.clear();
+                        checked_items.clear();
+                        checked_folder_size_cache.clear();
+                        checked_folder_size_running.clear();
+                        // Cancel any running folder stats thread
+                        if (folder_stats_running) {
+                            folder_stats_cancel = true;
+                            if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                            folder_stats_running = false;
+                        }
                     }
-                }
-                ImGui::NextColumn();
-                item_index++;
-            } while (FindNextFileA(hFind, &find_data));
-            FindClose(hFind);
+                    // --- End double-click logic ---
+                    // --- Calculate checked size/count ---
+                    if (pref_show_item_checkboxes && checked) {
+                        checked_count++;
+                        if (is_dir) {
+                            std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                            auto it = checked_folder_size_cache.find(full_path);
+                            if (it != checked_folder_size_cache.end()) {
+                                checked_total_size += it->second;
+                            }
+                        } else {
+                            HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                            if (hFile != INVALID_HANDLE_VALUE) {
+                                LARGE_INTEGER size;
+                                if (GetFileSizeEx(hFile, &size)) {
+                                    checked_total_size += size.QuadPart;
+                                }
+                                CloseHandle(hFile);
+                            }
+                        }
+                    }
+                    // --- End checked size/count ---
+                    ImGui::NextColumn();
+                    if (is_dir) {
+                        ImGui::TextUnformatted("folder");
+                    } else {
+                        const char* ext = strrchr(item_name.c_str(), '.');
+                        if (ext && ext != item_name.c_str()) {
+                            std::string ext_str = ext + 1;
+                            ImGui::TextUnformatted(GetFileTypeName(ext_str).c_str());
+                        } else {
+                            ImGui::TextUnformatted("file");
+                        }
+                    }
+                    ImGui::NextColumn();
+                    item_index++;
+                } while (FindNextFileA(hFind, &find_data));
+                FindClose(hFind);
+            }
         }
         ImGui::Columns(1);
         // --- Show checked summary ---
@@ -776,6 +825,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                     ImGui::Text("Show Settings");
                     ImGui::Separator();
                     ImGui::Checkbox("Item Checkboxes", &pref_show_item_checkboxes);
+                    ImGui::Checkbox("Side Navigation Panel", &pref_show_side_panel);
                 } else if (selected_section == 1) {
                     ImGui::Text("General Settings");
                     ImGui::Separator();
@@ -803,6 +853,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                     // Save preferences to config.json
                     nlohmann::json cfg;
                     cfg["show_item_checkboxes"] = pref_show_item_checkboxes;
+                    cfg["show_side_panel"] = pref_show_side_panel;
                     cfg["selected_section"] = selected_section;
                     // write to disk (returns true on success)
                     if (!write_json_file("config.json", cfg)) {
