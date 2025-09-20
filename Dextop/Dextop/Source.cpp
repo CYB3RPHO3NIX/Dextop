@@ -9,6 +9,8 @@
 #include <string>
 #include <atomic>
 #include <thread>
+#include <unordered_map>
+#include <mutex>
 
 // Helper struct for folder stats
 struct FolderStats {
@@ -109,6 +111,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
     // Add a global variable for the preference
     static bool pref_show_item_checkboxes = false;
+    static std::vector<std::string> checked_items; // store full paths
+    // --- Folder size cache and async state for checkboxes ---
+    static std::unordered_map<std::string, ULONGLONG> checked_folder_size_cache;
+    static std::unordered_map<std::string, std::atomic<bool>> checked_folder_size_running;
+    static std::mutex checked_folder_size_mutex;
 
     // Main loop
     while (show_window && !glfwWindowShouldClose(window))
@@ -291,20 +298,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         static bool selected_item_is_dir = false;
         static std::string selected_item_fullpath;
         static ULONGLONG selected_file_size = 0;
-        static int selected_folder_subfolders = 0; // immediate subfolders (non-recursive)
-        static int selected_folder_files = 0;      // immediate files (non-recursive)
+        static int selected_folder_subfolders = 0;
+        static int selected_folder_files = 0;
         static ULONGLONG selected_folder_size = 0;
-        // --- Add for item checkboxes ---
-        static std::vector<std::string> checked_items; // store full paths
         static ULONGLONG checked_total_size = 0;
-        checked_total_size = 0;
         int checked_count = 0;
-        // --- End add ---
+        checked_total_size = 0;
         ImGui::Columns(2, nullptr, true);
         ImGui::Text("Name"); ImGui::NextColumn();
         ImGui::Text("Type"); ImGui::NextColumn();
         ImGui::Separator();
-
         char search_path[MAX_PATH];
         wsprintfA(search_path, "%s*", current_dir.c_str());
         WIN32_FIND_DATAA find_data;
@@ -330,16 +333,31 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                     if (ImGui::Checkbox("", &checked)) {
                         if (checked) {
                             checked_items.push_back(full_path);
+                            // If it's a folder and not already being calculated, start async size calc
+                            if (is_dir && checked_folder_size_cache.find(full_path) == checked_folder_size_cache.end() && checked_folder_size_running.find(full_path) == checked_folder_size_running.end()) {
+                                checked_folder_size_running[full_path] = true;
+                                std::thread([full_path]() {
+                                    FolderStats stats;
+                                    GetFolderStatsRecursive(full_path, stats);
+                                    std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                                    checked_folder_size_cache[full_path] = stats.size;
+                                    checked_folder_size_running[full_path] = false;
+                                }).detach();
+                            }
                         } else {
                             checked_items.erase(std::remove(checked_items.begin(), checked_items.end(), full_path), checked_items.end());
+                            // Remove from cache and running
+                            std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                            checked_folder_size_cache.erase(full_path);
+                            checked_folder_size_running.erase(full_path);
                         }
                     }
                     ImGui::PopID();
                     ImGui::SameLine();
                 }
                 // --- End Checkbox logic ---
+                // --- Selectable with double-click folder open ---
                 if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
-                    // Single click: select item
                     selected_item_name = item_name;
                     selected_item_is_dir = is_dir;
                     selected_item_fullpath = full_path;
@@ -402,10 +420,28 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                         if (folder_stats_thread.joinable()) folder_stats_thread.detach();
                     }
                 }
+                // --- Double-click to open folder ---
+                if (is_dir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                    current_dir = full_path;
+                    selected_item_fullpath.clear();
+                    // Cancel any running folder stats thread
+                    if (folder_stats_running) {
+                        folder_stats_cancel = true;
+                        if (folder_stats_thread.joinable()) folder_stats_thread.join();
+                        folder_stats_running = false;
+                    }
+                }
+                // --- End double-click logic ---
                 // --- Calculate checked size/count ---
                 if (pref_show_item_checkboxes && checked) {
                     checked_count++;
-                    if (!is_dir) {
+                    if (is_dir) {
+                        std::lock_guard<std::mutex> lock(checked_folder_size_mutex);
+                        auto it = checked_folder_size_cache.find(full_path);
+                        if (it != checked_folder_size_cache.end()) {
+                            checked_total_size += it->second;
+                        }
+                    } else {
                         HANDLE hFile = CreateFileA(full_path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
                         if (hFile != INVALID_HANDLE_VALUE) {
                             LARGE_INTEGER size;
@@ -435,20 +471,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         }
         ImGui::Columns(1);
         // --- Show checked summary ---
-        if (pref_show_item_checkboxes) {
-            char checked_info[128];
-            double size = (double)checked_total_size;
-            if (size < 1024) {
-                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %llu bytes", checked_count, checked_total_size);
-            } else if (size < 1024 * 1024) {
-                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f KB", checked_count, size / 1024.0);
-            } else if (size < 1024 * 1024 * 1024) {
-                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f MB", checked_count, size / (1024.0 * 1024.0));
-            } else {
-                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f GB", checked_count, size / (1024.0 * 1024.0 * 1024.0));
-            }
-            ImGui::Text("%s", checked_info);
-        }
+        // (Removed: do not show selected item count and size here)
         // --- End checked summary ---
         ImGui::End();
 
@@ -459,7 +482,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         ImGuiWindowFlags statusbar_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
         ImGui::Begin("##statusbar", nullptr, statusbar_flags);
-        if (!selected_item_fullpath.empty()) {
+        if (pref_show_item_checkboxes && checked_count > 0) {
+            char checked_info[256];
+            double size = (double)checked_total_size;
+            int calculating = 0;
+            for (const auto& path : checked_items) {
+                if (checked_folder_size_running.count(path) && checked_folder_size_running[path]) calculating++;
+            }
+            if (size < 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %llu bytes%s", checked_count, checked_total_size, calculating ? " (Calculating...)" : "");
+            } else if (size < 1024 * 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f KB%s", checked_count, size / 1024.0, calculating ? " (Calculating...)" : "");
+            } else if (size < 1024 * 1024 * 1024) {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f MB%s", checked_count, size / (1024.0 * 1024.0), calculating ? " (Calculating...)" : "");
+            } else {
+                snprintf(checked_info, sizeof(checked_info), "Selected: %d | Size: %.2f GB%s", checked_count, size / (1024.0 * 1024.0 * 1024.0), calculating ? " (Calculating...)" : "");
+            }
+            ImGui::Text("%s", checked_info);
+        } else if (!selected_item_fullpath.empty()) {
             if (selected_item_is_dir) {
                 if (folder_stats_running && folder_stats_path == selected_item_fullpath) {
                     ImGui::Text("Folder: %s | Subfolders: %d | Files: %d | Size: Calculating...", selected_item_name.c_str(), selected_folder_subfolders, selected_folder_files);
@@ -506,10 +546,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         if (show_preferences) {
             ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Preferences", &show_preferences, ImGuiWindowFlags_NoCollapse)) {
-                // --- Preferences Sections ---
-                static const char* sections[] = { "General", "Appearance", "Shortcuts" };
+                static const char* sections[] = { "Show", "General", "Appearance", "Shortcuts" };
                 static int selected_section = 0;
-
                 ImGui::BeginChild("##prefs_sidebar", ImVec2(150, 0), true, ImGuiWindowFlags_NoMove);
                 for (int i = 0; i < IM_ARRAYSIZE(sections); ++i) {
                     if (ImGui::Selectable(sections[i], selected_section == i)) {
@@ -517,35 +555,34 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                     }
                 }
                 ImGui::EndChild();
-
                 ImGui::SameLine();
-
                 ImGui::BeginChild("##prefs_mainpanel", ImVec2(0, -50), false, ImGuiWindowFlags_NoMove);
                 if (selected_section == 0) {
+                    ImGui::Text("Show Settings");
+                    ImGui::Separator();
+                    ImGui::Checkbox("Item Checkboxes", &pref_show_item_checkboxes);
+                } else if (selected_section == 1) {
                     ImGui::Text("General Settings");
                     ImGui::Separator();
                     ImGui::Text("(Add general settings here)");
-                } else if (selected_section == 1) {
+                } else if (selected_section == 2) {
                     ImGui::Text("Appearance Settings");
                     ImGui::Separator();
                     ImGui::Text("(Add appearance settings here)");
-                } else if (selected_section == 2) {
+                } else if (selected_section == 3) {
                     ImGui::Text("Shortcuts");
                     ImGui::Separator();
                     ImGui::Text("(Add shortcut settings here)");
                 }
                 ImGui::EndChild();
-
                 // --- BUTTONS AT BOTTOM RIGHT ---
                 float button_width = 80.0f;
                 float spacing = 10.0f;
                 ImVec2 button_size(button_width, 0);
-
                 float window_w = ImGui::GetWindowWidth();
                 float button_area_w = button_width * 2 + spacing;
                 ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 40);
                 ImGui::SetCursorPosX(window_w - button_area_w - ImGui::GetStyle().WindowPadding.x);
-
                 if (ImGui::Button("OK", button_size)) {
                     ImGui::SaveIniSettingsToDisk("Dextop/imgui.ini");
                     show_preferences = false;
