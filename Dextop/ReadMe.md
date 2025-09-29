@@ -19,9 +19,13 @@ A modern, ImGui-powered file manager for Windows, built with C++20 and OpenGL. D
 
 ## Screenshots
 
-| Main UI | Preferences | New Shortcut | Custom Picker |
-|---------|-------------|--------------|--------------|
-| ![Main UI](screenshots/1.JPG) | ![Preferences](screenshots/2.JPG) | ![New Shortcut](screenshots/3.JPG) | ![Custom Picker](screenshots/4.JPG) |
+<p align="center">
+  <img src="screenshots/1.JPG" alt="Main UI" style="width:100%; max-width:1000px; margin-bottom:16px;" />
+  <img src="screenshots/2.JPG" alt="Preferences" style="width:100%; max-width:1000px; margin-bottom:16px;" />
+  <img src="screenshots/3.JPG" alt="New Shortcut" style="width:100%; max-width:1000px; margin-bottom:16px;" />
+  <img src="screenshots/4.JPG" alt="Custom Picker" style="width:100%; max-width:1000px; margin-bottom:16px;" />
+</p>
+
 
 ---
 
