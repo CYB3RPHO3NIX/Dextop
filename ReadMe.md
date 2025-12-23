@@ -81,4 +81,3 @@ This project is **heavily under development**. Contributions, bug reports, and f
 ## Contact
 
 - GitHub: [CYB3RPHO3NIX](https://github.com/CYB3RPHO3NIX)
-- Twitter: [@cyb3rpho3nix](https://twitter.com/cyb3rpho3nix)
